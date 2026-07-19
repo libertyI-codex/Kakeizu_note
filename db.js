@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "家系図ノート";
-  const APP_VERSION = "1.0.0-prototype.4-fix.1";
+  const APP_VERSION = "1.0.0-prototype.4-fix.2";
   const SCHEMA_VERSION = 4;
   const DB_NAME = "family-tree-note";
   const DB_VERSION = 4;

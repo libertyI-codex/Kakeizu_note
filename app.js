@@ -12,6 +12,7 @@
     visibleRelationships: [],
     settings: null,
     selectedPersonId: "",
+    selectedFamilyKey: "",
     layout: null,
     transform: { x: 0, y: 0, scale: 1 },
     pointers: new Map(),
@@ -252,11 +253,19 @@
     const x1 = left.x + cardWidth;
     const x2 = right.x;
     const className = partnerLineClass(relationship);
-    const lineAttributes = familyLineAttributes(family, "partner-link");
+    const lineAttributes = familyLineAttributes(family, "partner-line");
     if (family.partnerHasObstacles) {
-      const leftCenter = left.x + cardWidth / 2;
-      const rightCenter = right.x + cardWidth / 2;
-      addPath(fragment, "M " + leftCenter + " " + (left.y + cardHeight) + " V " + family.partnerRouteY + " H " + rightCenter + " V " + (right.y + cardHeight), className, lineAttributes);
+      if (relationship.status === "divorced" || relationship.status === "ended") {
+        const leftCenter = left.x + cardWidth / 2;
+        const rightCenter = right.x + cardWidth / 2;
+        const middle = (leftCenter + rightCenter) / 2;
+        const routeY = family.partnerRouteY;
+        addPath(fragment, "M " + leftCenter + " " + (left.y + cardHeight) + " V " + routeY + " H " + (middle - 7), className, lineAttributes);
+        addPath(fragment, "M " + (middle + 7) + " " + routeY + " H " + rightCenter + " V " + (right.y + cardHeight), className, lineAttributes);
+        addPath(fragment, "M " + (middle - 4) + " " + (routeY + 7) + " L " + (middle + 4) + " " + (routeY - 7), "tree-link tree-partner-marker", familyLineAttributes(family, "partner-status-marker"));
+      } else {
+        addPath(fragment, family.partnerPathD, className, lineAttributes);
+      }
       return;
     }
     if (left.generation === right.generation && x2 > x1) {
@@ -277,15 +286,22 @@
   function renderConnections(fragment, layout, persons, relationships) {
     const sourceRelationships = relationships || state.relationships;
     const nodeMap = new Map(layout.nodes.map(function (node) { return [node.id, node]; }));
-    const families = Layout.routeFamilyUnits(persons, sourceRelationships, layout.nodes, layout.cardWidth, layout.cardHeight);
+    const routing = Layout.routeFamilyUnits(persons, sourceRelationships, layout.nodes, layout.cardWidth, layout.cardHeight);
+    const families = routing.routes;
     families.forEach(function (family) {
       const childIds = family.children.map(function (child) { return child.id; });
+      const issueCodes = family.routingIssues.map(function (issue) { return issue.code; });
+      const routingStatus = family.routingIssues.some(function (issue) { return issue.severity === "error"; }) ? "error" : (issueCodes.length ? "warning" : "ok");
       const group = svgElement("g", {
         class: "tree-family-unit",
         "data-family-key": family.familyKey,
         "data-parent-ids": family.parentIds.join(" "),
         "data-child-ids": childIds.join(" "),
-        "data-family-lane": family.lane
+        "data-family-lane": family.lane,
+        "data-routing-status": routingStatus,
+        "data-routing-issues": issueCodes.join(" "),
+        "data-route-length": Math.round(family.routeLength || 0),
+        tabindex: "0", role: "button", "aria-label": "家族線を選択"
       });
       if (family.partnerRelationship && family.parentIds.length === 2) {
         const firstParent = nodeMap.get(family.partnerRelationship.fromPersonId);
@@ -295,15 +311,43 @@
         }
       }
       if (family.parentNodes.length && family.children.length) {
-        addPath(group, "M " + family.sourceX + " " + family.sourceY + " V " + family.busY, "tree-link", familyLineAttributes(family, "parent-stem"));
-        addPath(group, "M " + family.interval.start + " " + family.busY + " H " + family.interval.end, "tree-link", familyLineAttributes(family, "children-bus"));
+        addPath(group, family.parentPathD, "tree-link", familyLineAttributes(family, "parent-stem"));
+        addPath(group, family.busPathD, "tree-link", familyLineAttributes(family, "children-bus"));
         family.children.forEach(function (child) {
-          const childX = child.node.x + layout.cardWidth / 2;
-          addPath(group, "M " + childX + " " + family.busY + " V " + child.node.y, parentLineClass(child.relationships), familyLineAttributes(family, "child-stem", [child.id]));
+          addPath(group, child.pathD, parentLineClass(child.relationships), familyLineAttributes(family, "child-stem", [child.id]));
         });
       }
       if (group.childNodes.length) fragment.appendChild(group);
     });
+    if (routing.crossings.length) {
+      const crossingLayer = svgElement("g", { class: "tree-crossing-layer", "aria-hidden": "true" });
+      routing.crossings.forEach(function (crossing) {
+        const verticalFamily = families.find(function (family) { return family.familyKey === crossing.verticalFamilyKey; });
+        let verticalClass = "tree-link";
+        if (verticalFamily && crossing.verticalRole === "child-stem") {
+          const child = verticalFamily.children.find(function (item) { return item.id === crossing.verticalChildId; });
+          if (child) verticalClass = parentLineClass(child.relationships);
+        } else if (verticalFamily && crossing.verticalRole === "partner-line" && verticalFamily.partnerRelationship) {
+          verticalClass = partnerLineClass(verticalFamily.partnerRelationship);
+        }
+        const marker = svgElement("g", {
+          class: "tree-crossing-marker",
+          "data-crossing-type": "non-connection",
+          "data-horizontal-family-key": crossing.horizontalFamilyKey,
+          "data-vertical-family-key": crossing.verticalFamilyKey,
+          "data-horizontal-role": crossing.horizontalRole,
+          "data-vertical-role": crossing.verticalRole
+        });
+        marker.appendChild(svgElement("circle", { class: "tree-crossing-gap", cx: crossing.x, cy: crossing.y, r: 8.5 }));
+        addPath(marker, "M " + crossing.x + " " + (crossing.y - 11) + " V " + (crossing.y + 11), verticalClass + " tree-crossing-overpass", {
+          "data-relation-role": "crossing-overpass",
+          "data-family-key": crossing.verticalFamilyKey
+        });
+        crossingLayer.appendChild(marker);
+      });
+      fragment.appendChild(crossingLayer);
+    }
+    return routing;
   }
 
   function createTreeNode(node, person, cardWidth, cardHeight) {
@@ -457,12 +501,28 @@
     });
   }
 
+  function refreshLayoutBounds(layout) {
+    if (!layout.nodes.length) return;
+    const padding = 84;
+    const minX = Math.min.apply(null, layout.nodes.map(function (node) { return node.x; })) - padding;
+    const minY = Math.min.apply(null, layout.nodes.map(function (node) { return node.y; })) - padding;
+    const maxX = Math.max.apply(null, layout.nodes.map(function (node) { return node.x + layout.cardWidth; })) + padding;
+    const maxY = Math.max.apply(null, layout.nodes.map(function (node) { return node.y + layout.cardHeight; })) + padding;
+    layout.bounds = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+    const disconnected = layout.nodes.filter(function (node) { return node.disconnected; });
+    layout.disconnectedStartY = disconnected.length ? Math.min.apply(null, disconnected.map(function (node) { return node.y; })) - 40 : 0;
+  }
+
   function createTreeScene(persons, relationships, showGenerationLabels) {
     const layout = Layout.compute(persons, relationships, state.settings.focusPersonId);
     const nodeMap = new Map(layout.nodes.map(function (node) { return [node.id, node]; }));
     const personMap = new Map(persons.map(function (person) { return [person.id, person]; }));
     const fragment = document.createDocumentFragment();
-    renderConnections(fragment, layout, persons, relationships);
+    const routing = renderConnections(fragment, layout, persons, relationships);
+    refreshLayoutBounds(layout);
+    layout.routingDiagnostics = routing.diagnostics;
+    layout.routingCrossings = routing.crossings;
+    layout.routingCorridors = routing.corridors;
     if (showGenerationLabels) appendGenerationLabels(fragment, layout);
     if (layout.disconnectedStartY) {
       const y = layout.disconnectedStartY;
@@ -473,6 +533,33 @@
     }
     layout.nodes.forEach(function (node) { const person = personMap.get(node.id); if (person) fragment.appendChild(createTreeNode(node, person, layout.cardWidth, layout.cardHeight)); });
     return { layout: layout, fragment: fragment };
+  }
+
+  function updateTreeSelectionHighlight() {
+    if (!elements.treeViewport) return;
+    let selectedFamilyKey = state.selectedFamilyKey;
+    if (selectedFamilyKey && !Array.from(elements.treeViewport.querySelectorAll(".tree-family-unit")).some(function (group) { return group.dataset.familyKey === selectedFamilyKey; })) {
+      selectedFamilyKey = "";
+      state.selectedFamilyKey = "";
+    }
+    const selectedPersonId = selectedFamilyKey ? "" : state.selectedPersonId;
+    const selectedMemberIds = new Set();
+    elements.treeViewport.querySelectorAll(".tree-family-unit").forEach(function (group) {
+      const parentIds = (group.dataset.parentIds || "").split(/\s+/).filter(Boolean);
+      const childIds = (group.dataset.childIds || "").split(/\s+/).filter(Boolean);
+      const familySelected = selectedFamilyKey ? group.dataset.familyKey === selectedFamilyKey : Boolean(selectedPersonId && parentIds.concat(childIds).includes(selectedPersonId));
+      group.classList.toggle("is-selected-family", familySelected);
+      group.classList.toggle("is-dimmed", Boolean((selectedFamilyKey || selectedPersonId) && !familySelected));
+      if (familySelected) parentIds.concat(childIds).forEach(function (id) { selectedMemberIds.add(id); });
+    });
+    elements.treeViewport.querySelectorAll(".tree-node").forEach(function (node) {
+      node.classList.toggle("is-selected-person", Boolean(selectedPersonId && node.dataset.personId === selectedPersonId));
+      node.classList.toggle("is-family-member", selectedMemberIds.has(node.dataset.personId));
+    });
+    elements.treeViewport.querySelectorAll(".tree-crossing-marker").forEach(function (marker) {
+      const involved = [marker.dataset.horizontalFamilyKey, marker.dataset.verticalFamilyKey];
+      marker.classList.toggle("is-dimmed", Boolean(selectedFamilyKey && !involved.includes(selectedFamilyKey)));
+    });
   }
 
   function viewModeLabel() {
@@ -492,6 +579,10 @@
     const scene = createTreeScene(view.persons, view.relationships, state.settings.showGenerationLabels);
     state.layout = scene.layout;
     elements.treeViewport.appendChild(scene.fragment);
+    elements.treeViewport.setAttribute("data-routing-issue-count", String(scene.layout.routingDiagnostics.issues.length));
+    elements.treeViewport.setAttribute("data-routing-error-count", String(scene.layout.routingDiagnostics.errorCount));
+    elements.treeViewport.setAttribute("data-routing-crossing-count", String(scene.layout.routingDiagnostics.crossingCount));
+    updateTreeSelectionHighlight();
     applyTransform();
   }
 
@@ -552,7 +643,9 @@
 
   function openDetail(personId) {
     if (!findPerson(personId)) return;
+    state.selectedFamilyKey = "";
     state.selectedPersonId = personId;
+    updateTreeSelectionHighlight();
     renderDetail();
     elements.detailPanel.classList.add("is-open");
     elements.detailPanel.setAttribute("aria-hidden", "false");
@@ -561,6 +654,7 @@
 
   function closeDetail() {
     state.selectedPersonId = "";
+    updateTreeSelectionHighlight();
     elements.detailPanel.classList.remove("is-open");
     elements.detailPanel.setAttribute("aria-hidden", "true");
     elements.detailBackdrop.hidden = true;
@@ -1124,12 +1218,22 @@
   function bindTreeGestures() {
     elements.treeSvg.addEventListener("click", function (event) {
       const node = event.target.closest(".tree-node");
-      if (node && Date.now() >= state.suppressClickUntil) openDetail(node.dataset.personId);
+      if (node && Date.now() >= state.suppressClickUntil) { openDetail(node.dataset.personId); return; }
+      const family = event.target.closest(".tree-family-unit");
+      if (family && Date.now() >= state.suppressClickUntil) {
+        state.selectedFamilyKey = state.selectedFamilyKey === family.dataset.familyKey ? "" : family.dataset.familyKey;
+        updateTreeSelectionHighlight();
+      } else if (!state.dragMoved && Date.now() >= state.suppressClickUntil) {
+        state.selectedFamilyKey = "";
+        updateTreeSelectionHighlight();
+      }
     });
     elements.treeSvg.addEventListener("keydown", function (event) {
       if (event.key !== "Enter" && event.key !== " ") return;
       const node = event.target.closest(".tree-node");
-      if (node) { event.preventDefault(); openDetail(node.dataset.personId); }
+      if (node) { event.preventDefault(); openDetail(node.dataset.personId); return; }
+      const family = event.target.closest(".tree-family-unit");
+      if (family) { event.preventDefault(); state.selectedFamilyKey = family.dataset.familyKey; updateTreeSelectionHighlight(); }
     });
     elements.treeSvg.addEventListener("pointerdown", function (event) {
       elements.treeSvg.setPointerCapture(event.pointerId);
@@ -1606,6 +1710,7 @@
   function exportSvgStyles() {
     return "text{font-family:'Yu Gothic UI','Hiragino Kaku Gothic ProN',Meiryo,sans-serif}" +
       ".tree-link{fill:none;stroke:#9aab9e;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.tree-partner-link{stroke:#718c79;stroke-width:3}.tree-partner-link.is-separated{stroke-dasharray:11 8}.tree-partner-link.is-unknown{stroke:#aeb7b0;stroke-width:2}.tree-partner-marker{stroke:#61776a;stroke-width:2.4}.tree-parent-adoptive{stroke-dasharray:10 7}.tree-parent-step{stroke-width:1.6;stroke-dasharray:2 7}.tree-disconnected-divider{stroke:#c8c9bf;stroke-width:1.5;stroke-dasharray:5 7}.tree-disconnected-label{fill:#68756d;font-size:13px;font-weight:700}" +
+      ".tree-crossing-gap{fill:#f7f3e8;stroke:none}.tree-crossing-overpass{pointer-events:none}" +
       ".tree-generation-label{fill:#557c64;font-size:13px;font-weight:700}.tree-link.is-unverified{stroke-dasharray:4 5}.tree-node-card{fill:#fffef9;stroke:#d6d5c9;stroke-width:1.5}.tree-node.is-focus .tree-node-card{stroke:#557c64;stroke-width:3}.tree-node-photo-bg{fill:#e3eee5}.tree-node-initial{fill:#3f6250;font-size:23px;font-weight:700;text-anchor:middle;dominant-baseline:central}.tree-node-name{fill:#2c3a32;font-size:16px;font-weight:700;text-anchor:middle}.tree-node-former{fill:#68756d;font-size:11px;text-anchor:middle}.tree-node-years{fill:#68756d;font-size:12px;text-anchor:middle}.tree-node-deceased{fill:#ecebe4;stroke:#d6d5c9}.tree-node-deceased-text{fill:#68756d;font-size:10px;text-anchor:middle}.tree-node-focus-badge{fill:#557c64}.tree-node-focus-text{fill:white;font-size:9px;font-weight:700;text-anchor:middle}.tree-node-verification{fill:#fff4d8;stroke:#8b7041}.tree-node-verification-text{fill:#6c5328;font-size:10px;font-weight:700;text-anchor:middle}";
   }
 
@@ -1654,6 +1759,8 @@
       viewBox: bounds.x + " " + bounds.y + " " + bounds.width + " " + bounds.height,
       preserveAspectRatio: "xMidYMid meet"
     });
+    svg.setAttribute("data-routing-issue-count", String(scene.layout.routingDiagnostics.issues.length));
+    svg.setAttribute("data-routing-crossing-count", String(scene.layout.routingDiagnostics.crossingCount));
     const style = svgElement("style", {}); style.textContent = exportSvgStyles(); svg.appendChild(style);
     svg.appendChild(svgElement("rect", { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, fill: "#f7f3e8" }));
     svg.appendChild(scene.fragment);
@@ -1838,6 +1945,7 @@
     informationIssues: informationIssues,
     getTreeViewData: function (forceAll) { return getTreeViewData(Boolean(forceAll)); },
     formatPersonDate: formatPersonDate,
+    routingDiagnostics: function () { return state.layout ? state.layout.routingDiagnostics : null; },
     privacySnapshot: function (mode, forceAll) {
       const view = forceAll ? getTreeViewData(true) : { persons: state.visiblePersons, relationships: state.visibleRelationships };
       return createStandaloneSvg(view, state.settings.showGenerationLabels, mode, 1).svg.outerHTML;

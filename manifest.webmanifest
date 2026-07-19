@@ -1,8 +1,8 @@
 {
   "name": "家系図ノート",
   "short_name": "家系図ノート",
-  "description": "家族単位の親子線を独立描画する端末内保存の家系図アプリ（Ver.1.0 試作4 修正1）",
-  "version": "1.0.0-prototype.4-fix.1",
+  "description": "家族線の全経路衝突を回避する端末内保存の家系図アプリ（Ver.1.0 試作4 修正2）",
+  "version": "1.0.0-prototype.4-fix.2",
   "lang": "ja",
   "start_url": "./index.html",
   "scope": "./",

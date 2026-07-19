@@ -11,6 +11,10 @@
   const FAMILY_LANE_GAP = 14;
   const FAMILY_INTERVAL_MARGIN = 12;
   const FAMILY_BUS_STUB = 8;
+  const ROUTING_CLEARANCE = 10;
+  const MIN_TRACK_GAP = 9;
+  const CHILD_PORT_STEP = 14;
+  const CHILD_PORT_LIMIT = 70;
 
   function displayName(person) {
     return ((person.familyName || "") + " " + (person.givenName || "")).trim();
@@ -305,8 +309,284 @@
     });
   }
 
-  function intervalsAreSeparated(first, second) {
-    return first.end + FAMILY_INTERVAL_MARGIN < second.start || second.end + FAMILY_INTERVAL_MARGIN < first.start;
+  function intervalsAreSeparated(first, second, margin) {
+    const clearance = margin === undefined ? FAMILY_INTERVAL_MARGIN : margin;
+    return first.end + clearance < second.start || second.end + clearance < first.start;
+  }
+
+  function rangeOverlap(firstStart, firstEnd, secondStart, secondEnd) {
+    return Math.min(Math.max(firstStart, firstEnd), Math.max(secondStart, secondEnd)) - Math.max(Math.min(firstStart, firstEnd), Math.min(secondStart, secondEnd));
+  }
+
+  function pointInInterval(value, interval, margin) {
+    const clearance = margin || 0;
+    return value >= interval.start - clearance && value <= interval.end + clearance;
+  }
+
+  function pointsToPath(points) {
+    if (!points || !points.length) return "";
+    let path = "M " + points[0].x + " " + points[0].y;
+    for (let index = 1; index < points.length; index += 1) {
+      const previous = points[index - 1];
+      const point = points[index];
+      if (Math.abs(previous.x - point.x) < 0.01) path += " V " + point.y;
+      else if (Math.abs(previous.y - point.y) < 0.01) path += " H " + point.x;
+      else path += " L " + point.x + " " + point.y;
+    }
+    return path;
+  }
+
+  function pointsToSegments(points, metadata) {
+    const segments = [];
+    for (let index = 1; index < points.length; index += 1) {
+      const first = points[index - 1];
+      const second = points[index];
+      if (Math.hypot(second.x - first.x, second.y - first.y) < 0.1) continue;
+      segments.push(Object.assign({}, metadata, {
+        x1: first.x, y1: first.y, x2: second.x, y2: second.y,
+        orientation: Math.abs(first.y - second.y) < 0.01 ? "horizontal" : "vertical"
+      }));
+    }
+    return segments;
+  }
+
+  function routeVerticalXs(route) {
+    return [route.sourceX].concat(route.children.map(function (child) { return child.portX; }));
+  }
+
+  function routesConflictInProjection(first, second) {
+    if (!intervalsAreSeparated(first.interval, second.interval, ROUTING_CLEARANCE)) return true;
+    if (routeVerticalXs(first).some(function (x) { return pointInInterval(x, second.interval, ROUTING_CLEARANCE); })) return true;
+    if (routeVerticalXs(second).some(function (x) { return pointInInterval(x, first.interval, ROUTING_CLEARANCE); })) return true;
+    return routeVerticalXs(first).some(function (firstX) {
+      return routeVerticalXs(second).some(function (secondX) { return Math.abs(firstX - secondX) < ROUTING_CLEARANCE; });
+    });
+  }
+
+  function routeOrderingPenalty(route, lane, other, otherLane) {
+    let penalty = 0;
+    if (pointInInterval(route.sourceX, other.interval, 0) && otherLane < lane) penalty += 12;
+    route.children.forEach(function (child) {
+      if (pointInInterval(child.portX, other.interval, 0) && otherLane > lane) penalty += 12;
+    });
+    if (pointInInterval(other.sourceX, route.interval, 0) && lane < otherLane) penalty += 12;
+    other.children.forEach(function (child) {
+      if (pointInInterval(child.portX, route.interval, 0) && lane > otherLane) penalty += 12;
+    });
+    routeVerticalXs(route).forEach(function (firstX) {
+      routeVerticalXs(other).forEach(function (secondX) {
+        if (Math.abs(firstX - secondX) < ROUTING_CLEARANCE) penalty += 4;
+      });
+    });
+    return penalty;
+  }
+
+  function allocateChildPorts(layerRoutes, cardWidth) {
+    const occupied = [];
+    const usesByChild = new Map();
+    layerRoutes.forEach(function (route) {
+      occupied.push({ x: route.sourceX, familyKey: route.familyKey });
+    });
+    const entries = [];
+    layerRoutes.forEach(function (route) {
+      route.children.forEach(function (child) { entries.push({ route: route, child: child, desiredX: child.node.x + cardWidth / 2 }); });
+    });
+    entries.sort(function (first, second) { return first.desiredX - second.desiredX || first.route.familyKey.localeCompare(second.route.familyKey); });
+    entries.forEach(function (entry) {
+      const useIndex = usesByChild.get(entry.child.id) || 0;
+      usesByChild.set(entry.child.id, useIndex + 1);
+      const preferredDirection = useIndex % 2 ? -1 : 1;
+      const preferredDistance = Math.ceil(useIndex / 2) * CHILD_PORT_STEP * preferredDirection;
+      const offsets = [preferredDistance, 0];
+      for (let distance = CHILD_PORT_STEP; distance <= CHILD_PORT_LIMIT; distance += CHILD_PORT_STEP) offsets.push(-distance, distance);
+      let selected = entry.desiredX;
+      let selectedScore = Number.POSITIVE_INFINITY;
+      offsets.filter(function (offset, index, values) { return Math.abs(offset) <= CHILD_PORT_LIMIT && values.indexOf(offset) === index; }).forEach(function (offset) {
+        const candidate = entry.desiredX + offset;
+        let score = Math.abs(offset) * 0.04;
+        occupied.forEach(function (track) {
+          if (track.familyKey === entry.route.familyKey) return;
+          const distance = Math.abs(candidate - track.x);
+          if (distance < ROUTING_CLEARANCE) score += 1000 + (ROUTING_CLEARANCE - distance) * 50;
+          else if (distance < CHILD_PORT_STEP * 1.5) score += CHILD_PORT_STEP * 1.5 - distance;
+        });
+        if (score < selectedScore) { selected = candidate; selectedScore = score; }
+      });
+      entry.child.portX = selected;
+      entry.child.portIndex = useIndex;
+      occupied.push({ x: selected, familyKey: entry.route.familyKey });
+    });
+  }
+
+  function allocatePartnerTracks(routes, cardWidth, cardHeight) {
+    routes.forEach(function (route) {
+      route.partnerPoints = null;
+      route.partnerPathD = "";
+      route.partnerLane = -1;
+      route.partnerRouteY = route.parentBottom + 9;
+    });
+    const groups = new Map();
+    routes.filter(function (route) { return route.partnerHasObstacles; }).forEach(function (route) {
+      const key = String(route.parentGeneration);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(route);
+    });
+    groups.forEach(function (group) {
+      const lanes = [];
+      group.sort(function (first, second) { return first.partnerInterval.start - second.partnerInterval.start || first.familyKey.localeCompare(second.familyKey); });
+      group.forEach(function (route) {
+        let lane = 0;
+        while (lanes[lane] && !lanes[lane].every(function (interval) { return intervalsAreSeparated(interval, route.partnerInterval, ROUTING_CLEARANCE); })) lane += 1;
+        if (!lanes[lane]) lanes[lane] = [];
+        lanes[lane].push(route.partnerInterval);
+        route.partnerLane = lane;
+        route.partnerRouteY = route.parentBottom + 9 + lane * 9;
+        route.sourceY = route.partnerRouteY;
+      });
+    });
+    routes.forEach(function (route) {
+      if (!route.partnerRelationship || route.parentNodes.length !== 2) return;
+      const left = route.parentNodes[0].x < route.parentNodes[1].x ? route.parentNodes[0] : route.parentNodes[1];
+      const right = left === route.parentNodes[0] ? route.parentNodes[1] : route.parentNodes[0];
+      if (route.partnerHasObstacles) {
+        route.partnerPoints = [
+          { x: left.x + cardWidth / 2, y: left.y + cardHeight },
+          { x: left.x + cardWidth / 2, y: route.partnerRouteY },
+          { x: right.x + cardWidth / 2, y: route.partnerRouteY },
+          { x: right.x + cardWidth / 2, y: right.y + cardHeight }
+        ];
+      } else if (left.generation === right.generation && right.x > left.x + cardWidth) {
+        const y = (left.y + right.y) / 2 + cardHeight / 2;
+        route.partnerPoints = [{ x: left.x + cardWidth, y: y }, { x: right.x, y: y }];
+      } else {
+        const y = Math.max(left.y, right.y) + cardHeight + 30;
+        route.partnerPoints = [
+          { x: left.x + cardWidth / 2, y: left.y + cardHeight },
+          { x: left.x + cardWidth / 2, y: y },
+          { x: right.x + cardWidth / 2, y: y },
+          { x: right.x + cardWidth / 2, y: right.y + cardHeight }
+        ];
+      }
+      route.partnerPathD = pointsToPath(route.partnerPoints);
+    });
+  }
+
+  function refreshRouteVerticalMetrics(routes, cardHeight) {
+    routes.forEach(function (route) {
+      route.parentBottom = route.parentNodes.length ? Math.max.apply(null, route.parentNodes.map(function (node) { return node.y + cardHeight; })) : 0;
+      route.childTop = route.children.length ? Math.min.apply(null, route.children.map(function (child) { return child.node.y; })) : route.parentBottom;
+      const sameGeneration = route.parentNodes.length > 1 && route.parentNodes.every(function (node) { return node.generation === route.parentNodes[0].generation; });
+      route.sourceY = sameGeneration
+        ? route.parentNodes.reduce(function (sum, node) { return sum + node.y; }, 0) / route.parentNodes.length + cardHeight / 2
+        : route.parentBottom;
+    });
+  }
+
+  function buildRouteGeometry(route, cardWidth) {
+    route.segments = [];
+    if (route.partnerPoints) {
+      route.segments = route.segments.concat(pointsToSegments(route.partnerPoints, {
+        familyKey: route.familyKey, role: "partner-line", relatedPersonIds: route.parentIds.slice()
+      }));
+    }
+    if (!route.children.length || route.lane < 0) return;
+    const parentPoints = [{ x: route.sourceX, y: route.sourceY }, { x: route.sourceX, y: route.busY }];
+    route.parentPathD = pointsToPath(parentPoints);
+    route.segments = route.segments.concat(pointsToSegments(parentPoints, {
+      familyKey: route.familyKey, role: "parent-stem", relatedPersonIds: route.parentIds.slice()
+    }));
+    route.busPathD = "M " + route.interval.start + " " + route.busY + " H " + route.interval.end;
+    route.segments.push({
+      familyKey: route.familyKey, role: "children-bus", orientation: "horizontal",
+      x1: route.interval.start, y1: route.busY, x2: route.interval.end, y2: route.busY,
+      relatedPersonIds: route.parentIds.concat(route.children.map(function (child) { return child.id; }))
+    });
+    route.children.forEach(function (child) {
+      const points = [{ x: child.portX, y: route.busY }, { x: child.portX, y: child.node.y }];
+      child.pathD = pointsToPath(points);
+      child.segments = pointsToSegments(points, {
+        familyKey: route.familyKey, role: "child-stem", childId: child.id,
+        relatedPersonIds: route.parentIds.concat([child.id])
+      });
+      route.segments = route.segments.concat(child.segments);
+    });
+  }
+
+  function findOrthogonalCrossings(routes) {
+    const segments = routes.reduce(function (all, route) { return all.concat(route.segments || []); }, []);
+    const crossings = [];
+    const seen = new Set();
+    segments.forEach(function (horizontal) {
+      if (horizontal.orientation !== "horizontal") return;
+      segments.forEach(function (vertical) {
+        if (vertical.orientation !== "vertical" || horizontal.familyKey === vertical.familyKey) return;
+        const x = vertical.x1;
+        const y = horizontal.y1;
+        if (x < Math.min(horizontal.x1, horizontal.x2) - 0.1 || x > Math.max(horizontal.x1, horizontal.x2) + 0.1) return;
+        if (y < Math.min(vertical.y1, vertical.y2) - 0.1 || y > Math.max(vertical.y1, vertical.y2) + 0.1) return;
+        const key = [Math.round(x * 10), Math.round(y * 10), horizontal.familyKey, vertical.familyKey, horizontal.role, vertical.role].join("|");
+        if (seen.has(key)) return;
+        seen.add(key);
+        crossings.push({
+          x: x, y: y,
+          horizontalFamilyKey: horizontal.familyKey, horizontalRole: horizontal.role,
+          verticalFamilyKey: vertical.familyKey, verticalRole: vertical.role,
+          verticalChildId: vertical.childId || ""
+        });
+      });
+    });
+    return crossings;
+  }
+
+  function segmentIntersectsCard(segment, node, cardWidth, cardHeight) {
+    if ((segment.relatedPersonIds || []).includes(node.id)) return false;
+    const left = node.x + 3;
+    const right = node.x + cardWidth - 3;
+    const top = node.y + 3;
+    const bottom = node.y + cardHeight - 3;
+    if (segment.orientation === "horizontal") {
+      if (segment.y1 <= top || segment.y1 >= bottom) return false;
+      return rangeOverlap(segment.x1, segment.x2, left, right) > 0;
+    }
+    if (segment.x1 <= left || segment.x1 >= right) return false;
+    return rangeOverlap(segment.y1, segment.y2, top, bottom) > 0;
+  }
+
+  function diagnoseRouting(routes, crossings, nodes, cardWidth, cardHeight, corridors) {
+    const diagnostics = [];
+    const segments = routes.reduce(function (all, route) { return all.concat(route.segments || []); }, []);
+    for (let firstIndex = 0; firstIndex < segments.length; firstIndex += 1) {
+      const first = segments[firstIndex];
+      nodes.forEach(function (node) {
+        if (segmentIntersectsCard(first, node, cardWidth, cardHeight)) {
+          diagnostics.push({ code: "card-collision", severity: "error", familyKeys: [first.familyKey], role: first.role, personId: node.id });
+        }
+      });
+      for (let secondIndex = firstIndex + 1; secondIndex < segments.length; secondIndex += 1) {
+        const second = segments[secondIndex];
+        if (first.familyKey === second.familyKey || first.orientation !== second.orientation) continue;
+        if (first.orientation === "horizontal" && Math.abs(first.y1 - second.y1) < 0.8 && rangeOverlap(first.x1, first.x2, second.x1, second.x2) > 1) {
+          diagnostics.push({ code: "horizontal-overlap", severity: "error", familyKeys: [first.familyKey, second.familyKey], role: first.role + "/" + second.role });
+        }
+        if (first.orientation === "vertical" && Math.abs(first.x1 - second.x1) < 0.8 && rangeOverlap(first.y1, first.y2, second.y1, second.y2) > 1) {
+          diagnostics.push({ code: "vertical-overlap", severity: "error", familyKeys: [first.familyKey, second.familyKey], role: first.role + "/" + second.role });
+        }
+      }
+    }
+    routes.forEach(function (route) {
+      const length = (route.segments || []).reduce(function (sum, segment) { return sum + Math.abs(segment.x2 - segment.x1) + Math.abs(segment.y2 - segment.y1); }, 0);
+      route.routeLength = length;
+      if (length > Math.max(1200, cardWidth * 7)) diagnostics.push({ code: "long-route", severity: "warning", familyKeys: [route.familyKey], length: Math.round(length) });
+    });
+    corridors.forEach(function (corridor) {
+      if (corridor.trackCount > 1 && corridor.trackGap < MIN_TRACK_GAP) diagnostics.push({ code: "dense-corridor", severity: "warning", familyKeys: corridor.familyKeys.slice(), corridorKey: corridor.key });
+    });
+    return {
+      issues: diagnostics,
+      crossingCount: crossings.length,
+      errorCount: diagnostics.filter(function (item) { return item.severity === "error"; }).length,
+      warningCount: diagnostics.filter(function (item) { return item.severity === "warning"; }).length
+    };
   }
 
   function routeFamilyUnits(persons, relationships, nodes, cardWidth, cardHeight) {
@@ -315,54 +595,34 @@
     const routes = units.map(function (unit) {
       const parentNodes = unit.parentIds.map(function (id) { return nodeMap.get(id); }).filter(Boolean);
       const children = unit.children.map(function (child) {
-        return { id: child.id, node: nodeMap.get(child.id), relationships: child.relationships };
+        return { id: child.id, node: nodeMap.get(child.id), relationships: child.relationships, portX: 0, portIndex: 0 };
       }).filter(function (child) { return child.node; }).sort(function (first, second) {
         return first.node.x - second.node.x || first.id.localeCompare(second.id);
       });
-      const sourceX = parentNodes.length
-        ? parentNodes.reduce(function (sum, node) { return sum + node.x + cardWidth / 2; }, 0) / parentNodes.length
-        : 0;
+      const sourceX = parentNodes.length ? parentNodes.reduce(function (sum, node) { return sum + node.x + cardWidth / 2; }, 0) / parentNodes.length : 0;
       const parentBottom = parentNodes.length ? Math.max.apply(null, parentNodes.map(function (node) { return node.y + cardHeight; })) : 0;
-      let partnerHasObstacles = false;
-      if (parentNodes.length === 2 && parentNodes[0].generation === parentNodes[1].generation) {
-        const leftCenter = Math.min(parentNodes[0].x, parentNodes[1].x) + cardWidth / 2;
-        const rightCenter = Math.max(parentNodes[0].x, parentNodes[1].x) + cardWidth / 2;
-        partnerHasObstacles = nodes.some(function (node) {
-          if (unit.parentIds.includes(node.id) || node.generation !== parentNodes[0].generation) return false;
-          const center = node.x + cardWidth / 2;
-          return center > leftCenter && center < rightCenter;
-        });
-      }
-      const partnerRouteY = parentBottom + 10;
-      const sourceY = partnerHasObstacles
-        ? partnerRouteY
-        : (parentNodes.length > 1 && parentNodes.every(function (node) { return node.generation === parentNodes[0].generation; })
-          ? parentNodes.reduce(function (sum, node) { return sum + node.y; }, 0) / parentNodes.length + cardHeight / 2
-          : parentBottom);
-      const childTop = children.length ? Math.min.apply(null, children.map(function (child) { return child.node.y; })) : parentBottom;
-      const centers = children.map(function (child) { return child.node.x + cardWidth / 2; });
-      let intervalStart = centers.length ? Math.min.apply(null, [sourceX].concat(centers)) : sourceX;
-      let intervalEnd = centers.length ? Math.max.apply(null, [sourceX].concat(centers)) : sourceX;
-      if (children.length && intervalEnd - intervalStart < FAMILY_BUS_STUB * 2) {
-        intervalStart -= FAMILY_BUS_STUB;
-        intervalEnd += FAMILY_BUS_STUB;
-      }
       const parentGeneration = parentNodes.length ? Math.max.apply(null, parentNodes.map(function (node) { return node.generation; })) : 0;
       const childGeneration = children.length ? Math.min.apply(null, children.map(function (child) { return child.node.generation; })) : parentGeneration;
+      const childTop = children.length ? Math.min.apply(null, children.map(function (child) { return child.node.y; })) : parentBottom;
       const component = parentNodes[0] ? parentNodes[0].component : (children[0] ? children[0].node.component : 0);
+      let partnerHasObstacles = false;
+      let partnerInterval = { start: sourceX, end: sourceX };
+      if (parentNodes.length === 2 && parentNodes[0].generation === parentNodes[1].generation) {
+        const centers = parentNodes.map(function (node) { return node.x + cardWidth / 2; });
+        partnerInterval = { start: Math.min.apply(null, centers), end: Math.max.apply(null, centers) };
+        partnerHasObstacles = nodes.some(function (node) {
+          if (unit.parentIds.includes(node.id) || node.generation !== parentGeneration) return false;
+          return node.x + cardWidth / 2 > partnerInterval.start && node.x + cardWidth / 2 < partnerInterval.end;
+        });
+      }
+      const sameGeneration = parentNodes.length > 1 && parentNodes.every(function (node) { return node.generation === parentNodes[0].generation; });
+      const sourceY = sameGeneration ? parentNodes.reduce(function (sum, node) { return sum + node.y; }, 0) / parentNodes.length + cardHeight / 2 : parentBottom;
       return Object.assign({}, unit, {
-        parentNodes: parentNodes,
-        children: children,
-        sourceX: sourceX,
-        sourceY: sourceY,
-        partnerHasObstacles: partnerHasObstacles,
-        partnerRouteY: partnerRouteY,
-        parentBottom: parentBottom,
-        childTop: childTop,
-        interval: { start: intervalStart, end: intervalEnd },
-        layerKey: component + ":" + parentGeneration + ">" + childGeneration,
-        lane: -1,
-        busY: 0
+        parentNodes: parentNodes, children: children, sourceX: sourceX, sourceY: sourceY,
+        parentBottom: parentBottom, childTop: childTop, parentGeneration: parentGeneration, childGeneration: childGeneration,
+        component: component, layerKey: parentGeneration + ">" + childGeneration,
+        partnerHasObstacles: partnerHasObstacles, partnerInterval: partnerInterval, partnerLane: -1, partnerRouteY: parentBottom + 9,
+        interval: { start: sourceX, end: sourceX }, lane: -1, busY: 0, segments: []
       });
     });
 
@@ -371,29 +631,89 @@
       if (!routesByLayer.has(route.layerKey)) routesByLayer.set(route.layerKey, []);
       routesByLayer.get(route.layerKey).push(route);
     });
-
-    routesByLayer.forEach(function (layerRoutes) {
-      const lanes = [];
-      layerRoutes.sort(function (first, second) {
-        return first.interval.start - second.interval.start || first.interval.end - second.interval.end || first.familyKey.localeCompare(second.familyKey);
-      });
-      layerRoutes.forEach(function (route) {
-        let lane = 0;
-        while (lanes[lane] && !lanes[lane].every(function (interval) { return intervalsAreSeparated(interval, route.interval); })) lane += 1;
-        if (!lanes[lane]) lanes[lane] = [];
-        lanes[lane].push(route.interval);
-        route.lane = lane;
-      });
-
-      const lower = Math.max.apply(null, layerRoutes.map(function (route) { return route.parentBottom; })) + 14;
-      const upper = Math.min.apply(null, layerRoutes.map(function (route) { return route.childTop; })) - 16;
-      const maximumLane = Math.max.apply(null, layerRoutes.map(function (route) { return route.lane; }));
-      const preferredBase = lower + Math.max(8, Math.min(24, (upper - lower) * 0.28));
-      const availableForLanes = Math.max(0, upper - preferredBase);
-      const laneGap = maximumLane > 0 ? Math.max(2, Math.min(FAMILY_LANE_GAP, availableForLanes / maximumLane)) : FAMILY_LANE_GAP;
-      layerRoutes.forEach(function (route) { route.busY = preferredBase + route.lane * laneGap; });
+    const layerEntries = Array.from(routesByLayer.entries()).sort(function (first, second) {
+      const firstRoute = first[1][0];
+      const secondRoute = second[1][0];
+      return firstRoute.parentGeneration - secondRoute.parentGeneration || firstRoute.childGeneration - secondRoute.childGeneration || first[0].localeCompare(second[0]);
     });
-    return routes;
+    layerEntries.forEach(function (entry) {
+      const layerRoutes = entry[1];
+      allocateChildPorts(layerRoutes, cardWidth);
+      layerRoutes.forEach(function (route) {
+        const xs = [route.sourceX].concat(route.children.map(function (child) { return child.portX; }));
+        route.interval = { start: Math.min.apply(null, xs), end: Math.max.apply(null, xs) };
+        if (route.interval.end - route.interval.start < FAMILY_BUS_STUB * 2) {
+          route.interval.start -= FAMILY_BUS_STUB;
+          route.interval.end += FAMILY_BUS_STUB;
+        }
+      });
+      const conflicts = new Map(layerRoutes.map(function (route) { return [route.familyKey, new Set()]; }));
+      for (let first = 0; first < layerRoutes.length; first += 1) {
+        for (let second = first + 1; second < layerRoutes.length; second += 1) {
+          if (!routesConflictInProjection(layerRoutes[first], layerRoutes[second])) continue;
+          conflicts.get(layerRoutes[first].familyKey).add(layerRoutes[second].familyKey);
+          conflicts.get(layerRoutes[second].familyKey).add(layerRoutes[first].familyKey);
+        }
+      }
+      const ordered = layerRoutes.slice().sort(function (first, second) {
+        return conflicts.get(second.familyKey).size - conflicts.get(first.familyKey).size || (second.interval.end - second.interval.start) - (first.interval.end - first.interval.start) || first.familyKey.localeCompare(second.familyKey);
+      });
+      const assigned = [];
+      ordered.forEach(function (route) {
+        const usedLanes = new Set(assigned.filter(function (other) {
+          return conflicts.get(route.familyKey).has(other.familyKey);
+        }).map(function (other) { return other.lane; }));
+        let lane = 0;
+        while (usedLanes.has(lane)) lane += 1;
+        route.lane = lane;
+        assigned.push(route);
+      });
+      const maximumLane = Math.max.apply(null, layerRoutes.map(function (route) { return route.lane; }));
+      refreshRouteVerticalMetrics(routes, cardHeight);
+      allocatePartnerTracks(routes, cardWidth, cardHeight);
+      const topFromParents = Math.max.apply(null, layerRoutes.map(function (route) { return route.parentBottom; })) + 16;
+      const topFromPartners = Math.max.apply(null, layerRoutes.map(function (route) { return route.partnerHasObstacles ? route.partnerRouteY + 9 : topFromParents; }));
+      const top = Math.max(topFromParents, topFromPartners);
+      const bottom = Math.min.apply(null, layerRoutes.map(function (route) { return route.childTop; })) - 18;
+      const requiredBottom = top + maximumLane * FAMILY_LANE_GAP;
+      if (bottom < requiredBottom) {
+        const shift = requiredBottom - bottom;
+        const childGeneration = layerRoutes[0].childGeneration;
+        nodes.forEach(function (node) {
+          if (node.generation >= childGeneration) node.y += shift;
+        });
+      }
+    });
+
+    refreshRouteVerticalMetrics(routes, cardHeight);
+    allocatePartnerTracks(routes, cardWidth, cardHeight);
+    const corridors = [];
+    layerEntries.forEach(function (entry) {
+      const layerKey = entry[0];
+      const layerRoutes = entry[1];
+      const topFromParents = Math.max.apply(null, layerRoutes.map(function (route) { return route.parentBottom; })) + 16;
+      const topFromPartners = Math.max.apply(null, layerRoutes.map(function (route) { return route.partnerHasObstacles ? route.partnerRouteY + 9 : topFromParents; }));
+      const top = Math.max(topFromParents, topFromPartners);
+      const bottom = Math.min.apply(null, layerRoutes.map(function (route) { return route.childTop; })) - 18;
+      const maximumLane = Math.max.apply(null, layerRoutes.map(function (route) { return route.lane; }));
+      const available = Math.max(1, bottom - top);
+      const baseY = maximumLane > 0 ? top : top + available * 0.42;
+      layerRoutes.forEach(function (route) {
+        route.busY = Math.min(bottom, baseY + route.lane * FAMILY_LANE_GAP);
+        buildRouteGeometry(route, cardWidth);
+      });
+      corridors.push({
+        key: layerKey, top: top, bottom: bottom, trackGap: FAMILY_LANE_GAP,
+        trackCount: maximumLane + 1, familyKeys: layerRoutes.map(function (route) { return route.familyKey; })
+      });
+    });
+    routes.filter(function (route) { return !route.children.length; }).forEach(function (route) { buildRouteGeometry(route, cardWidth); });
+    const crossings = findOrthogonalCrossings(routes);
+    const diagnostics = diagnoseRouting(routes, crossings, nodes, cardWidth, cardHeight, corridors);
+    routes.forEach(function (route) {
+      route.routingIssues = diagnostics.issues.filter(function (issue) { return issue.familyKeys.includes(route.familyKey); });
+    });
+    return { routes: routes, corridors: corridors, crossings: crossings, diagnostics: diagnostics };
   }
 
   function centerParentGroups(groupsByGeneration, positions, relationships) {

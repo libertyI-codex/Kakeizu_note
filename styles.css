@@ -273,6 +273,14 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 .tree-partner-marker { stroke: #61776a; stroke-width: 2.4; }
 .tree-parent-adoptive { stroke-dasharray: 10 7; }
 .tree-parent-step { stroke-width: 1.6; stroke-dasharray: 2 7; }
+.tree-family-unit .tree-link { pointer-events: stroke; cursor: pointer; transition: opacity .16s ease, stroke-width .16s ease; }
+.tree-family-unit.is-selected-family .tree-link { stroke: #365f49; stroke-width: 3.4; }
+.tree-family-unit.is-dimmed { opacity: .2; }
+.tree-crossing-gap { fill: var(--ivory); stroke: none; }
+.tree-crossing-overpass { pointer-events: none; }
+.tree-crossing-marker.is-dimmed { opacity: .2; }
+.tree-node.is-selected-person .tree-node-card { stroke: #315d45; stroke-width: 3.5; }
+.tree-node.is-family-member:not(.is-selected-person) .tree-node-card { stroke: #789883; stroke-width: 2.2; }
 .tree-disconnected-divider { stroke: #c8c9bf; stroke-width: 1.5; stroke-dasharray: 5 7; }
 .tree-disconnected-label { fill: var(--muted); font-size: 13px; font-weight: 700; }
 .tree-node { cursor: pointer; }
