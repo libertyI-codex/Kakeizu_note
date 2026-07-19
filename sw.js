@@ -1,13 +1,16 @@
 "use strict";
 
-const CACHE_NAME = "family-tree-note-v3";
+const CACHE_NAME = "family-tree-note-v4";
 const APP_FILES = [
   "./",
   "./index.html",
   "./styles.css",
   "./db.js",
+  "./db-v4.js",
   "./tree-layout.js",
+  "./gedcom.js",
   "./app.js",
+  "./v4-app.js",
   "./manifest.webmanifest",
   "./icon.svg"
 ];

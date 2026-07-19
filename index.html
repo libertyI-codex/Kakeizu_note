@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#557c64">
-  <meta name="description" content="不完全な年月日、人物整理、範囲表示、プライバシー印刷に対応した端末内保存の家系図ノート">
-  <meta name="application-version" content="1.0.0-prototype.3">
+  <meta name="description" content="複数家系図、資料・引用、年表、スナップショット、GEDCOMに対応した端末内保存の家系図ノート">
+  <meta name="application-version" content="1.0.0-prototype.4">
   <title>家系図ノート</title>
   <script>
     if (/^https?:$/.test(location.protocol)) {
@@ -18,8 +18,11 @@
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <script defer src="./db.js"></script>
+  <script defer src="./db-v4.js"></script>
   <script defer src="./tree-layout.js"></script>
+  <script defer src="./gedcom.js"></script>
   <script defer src="./app.js"></script>
+  <script defer src="./v4-app.js"></script>
 </head>
 <body>
   <noscript><div class="fatal-error">家系図ノートを使うにはJavaScriptを有効にしてください。</div></noscript>
@@ -31,9 +34,13 @@
         <div><h1>家系図ノート</h1><p>家族のつながりを、端末の中に</p></div>
       </div>
 
+      <button id="treeSwitcherButton" class="tree-switcher" type="button" aria-haspopup="dialog"><span aria-hidden="true">♧</span><span><small>現在の家系図</small><strong id="currentTreeName">家族の家系図</strong></span><span aria-hidden="true">⌄</span></button>
+
       <nav class="primary-nav" aria-label="画面">
         <button class="is-active" type="button" data-app-view="tree">家系図</button>
         <button type="button" data-app-view="people">人物一覧</button>
+        <button type="button" data-v4-view="timeline">家族年表</button>
+        <button type="button" data-v4-view="sources">資料</button>
       </nav>
 
       <div class="search-wrap">
@@ -78,11 +85,23 @@
         </div>
       </section>
 
+      <section id="timelineSection" class="v4-page app-view" aria-label="家族年表" hidden>
+        <div class="v4-page-inner"><div class="v4-page-heading"><div><p class="eyebrow">家族の記録</p><h2>家族年表 <span id="timelineCount" class="count-chip">0件</span></h2><p>人物の出来事を年代順に確認します。病歴などのセンシティブ情報は出力対象から分離して管理できます。</p></div><button id="addEventButton" class="primary-button" type="button">出来事を追加</button></div>
+        <div class="v4-filter-grid"><label>人物<select id="timelinePersonFilter"><option value="all">全員</option></select></label><label>種類<select id="timelineTypeFilter"><option value="all">すべて</option></select></label><label>年代<input id="timelineDecadeFilter" type="number" step="10" min="1" max="9990" placeholder="例：1950"></label><label>確認状態<select id="timelineVerificationFilter"><option value="all">すべて</option><option value="confirmed">確認済み</option><option value="probable">可能性が高い</option><option value="unconfirmed">未確認</option><option value="disputed">情報が食い違っている</option></select></label><label class="checkbox-label"><input id="timelineCitedOnly" type="checkbox"><span>出典ありのみ</span></label></div><div id="timelineList" class="timeline-list"></div></div>
+      </section>
+
+      <section id="sourcesSection" class="v4-page app-view" aria-label="資料" hidden>
+        <div class="v4-page-inner"><div class="v4-page-heading"><div><p class="eyebrow">情報の根拠</p><h2>資料 <span id="sourceCount" class="count-chip">0件</span></h2><p>戸籍、写真、聞き取りなどを端末内に保存し、人物・関係・出来事へ引用できます。</p></div><button id="addSourceButton" class="primary-button" type="button">資料を追加</button></div>
+        <div class="v4-filter-grid"><label class="wide-control">資料を検索<input id="sourceSearch" type="search" placeholder="資料名・著者・保管先"></label><label>種類<select id="sourceTypeFilter"><option value="all">すべて</option></select></label><label>信頼性<select id="sourceReliabilityFilter"><option value="all">すべて</option><option value="high">信頼性が高い</option><option value="medium">参考情報</option><option value="low">未確認</option><option value="unknown">不明</option></select></label><label>並び替え<select id="sourceSort"><option value="updated">更新日順</option><option value="name">資料名順</option><option value="obtained">取得日順</option></select></label></div><div id="sourceList" class="source-list"></div></div>
+      </section>
+
+      <section id="statisticsSection" class="v4-page app-view" aria-label="統計" hidden><div class="v4-page-inner"><div class="v4-page-heading"><div><p class="eyebrow">現在の家系図</p><h2>統計</h2><p>登録状況を落ち着いたカードで確認できます。</p></div></div><div id="statisticsGrid" class="statistics-grid"></div></div></section>
+
       <aside id="detailPanel" class="detail-panel" aria-label="人物詳細" aria-hidden="true"><div class="sheet-handle" aria-hidden="true"></div><div id="detailContent"></div></aside>
       <button id="detailBackdrop" class="panel-backdrop" type="button" aria-label="人物詳細を閉じる" hidden></button>
     </main>
 
-    <nav class="mobile-nav" aria-label="画面"><button class="is-active" type="button" data-app-view="tree"><span aria-hidden="true">♧</span>家系図</button><button type="button" data-app-view="people"><span aria-hidden="true">☷</span>人物一覧</button><button id="mobileMenuButton" type="button"><span aria-hidden="true">☰</span>設定</button></nav>
+    <nav class="mobile-nav" aria-label="画面"><button class="is-active" type="button" data-app-view="tree"><span aria-hidden="true">♧</span>家系図</button><button type="button" data-app-view="people"><span aria-hidden="true">☷</span>人物</button><button type="button" data-v4-view="timeline"><span aria-hidden="true">⌁</span>年表</button><button type="button" data-v4-view="sources"><span aria-hidden="true">▤</span>資料</button><button id="mobileMenuButton" type="button"><span aria-hidden="true">☰</span>その他</button></nav>
   </div>
 
   <dialog id="personDialog" class="app-dialog form-dialog">
@@ -116,6 +135,7 @@
 
         <div class="form-grid person-basic-grid">
           <label>性別（任意）<select id="gender"><option value="">未設定</option><option value="female">女性</option><option value="male">男性</option><option value="nonbinary">ノンバイナリー</option><option value="other">その他</option><option value="undisclosed">回答しない</option></select></label>
+          <label>確認状態<select id="personVerificationStatus"><option value="confirmed">確認済み</option><option value="probable">可能性が高い</option><option value="unconfirmed" selected>未確認</option><option value="disputed">情報が食い違っている</option></select></label>
           <label class="checkbox-label"><input id="isDeceased" type="checkbox"><span>故人として登録する</span></label>
         </div>
 
@@ -162,6 +182,7 @@
         <label>関係の詳細<select id="relationType"></select></label>
         <label id="relationStatusLabel" hidden>現在の状態<select id="relationStatus"><option value="current">婚姻中・関係継続中</option><option value="divorced">離婚</option><option value="separated">別居</option><option value="ended">関係終了</option><option value="unknown">不明</option></select></label>
         <div class="form-grid compact-grid"><label>開始日 <input id="relationStartDate" type="date"></label><label>終了日 <input id="relationEndDate" type="date"></label></div>
+        <label>確認状態<select id="relationshipVerificationStatus"><option value="confirmed">確認済み</option><option value="probable">可能性が高い</option><option value="unconfirmed" selected>未確認</option><option value="disputed">情報が食い違っている</option></select></label>
         <label>メモ <textarea id="relationMemo" rows="3" maxlength="1000"></textarea></label><p id="relationshipFormError" class="form-error" role="alert" hidden></p>
       </div>
       <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button id="saveRelationshipButton" class="primary-button" type="submit">関係を保存</button></div>
@@ -210,7 +231,7 @@
     <form id="mergeForm" method="dialog">
       <div class="dialog-header"><div><p class="eyebrow">重複人物の整理</p><h2>人物を統合</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div>
       <div class="dialog-body">
-        <div class="warning-callout"><strong>統合前にJSONバックアップを保存してください</strong><p>統合は人物と関係をまとめて変更します。今回、統合を元に戻す機能はありません。</p><button id="mergeBackupButton" class="secondary-button" type="button">先にJSONを書き出す</button></div>
+        <div class="warning-callout"><strong>統合前に自動スナップショットを作成します</strong><p>統合は人物・関係・出来事・引用をまとめて変更します。直後は「元に戻す」、後からはスナップショット復元を利用できます。完全なJSONバックアップも推奨します。</p><button id="mergeBackupButton" class="secondary-button" type="button">先にJSONを書き出す</button></div>
         <fieldset><legend>残す人物</legend><div id="mergeKeepChoices" class="merge-keep-choices"></div></fieldset>
         <p class="helper-text">各項目で残す情報を確認してください。残す側が空欄の場合は、もう一方から自動補完します。</p>
         <div id="mergeFields" class="merge-fields"></div>
@@ -243,13 +264,35 @@
     <div class="dialog-header"><div><p class="eyebrow">この端末の設定</p><h2>設定・データ管理</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div>
     <div class="dialog-body settings-body">
       <section class="setting-section"><h3>人物データの確認</h3><p>全人物の確認、情報不足、重複している可能性のある人物を整理します。</p><div class="button-row"><button id="openPeopleButton" class="secondary-button" type="button">人物一覧を開く</button><button id="openIssuesButton" class="secondary-button" type="button">情報不足を確認</button><button id="duplicateButton" class="secondary-button" type="button">重複候補を確認</button></div></section>
+      <section class="setting-section"><h3>家系図と調査記録</h3><p>複数の家系図、年表、資料、統計を管理します。</p><div class="button-row"><button id="openTreeManagerButton" class="secondary-button" type="button">家系図を管理</button><button id="openTimelineButton" class="secondary-button" type="button">家族年表</button><button id="openSourcesButton" class="secondary-button" type="button">資料一覧</button><button id="openStatisticsButton" class="secondary-button" type="button">統計</button></div></section>
+      <section class="setting-section"><h3>履歴と交換</h3><p>スナップショット、家系図単体JSON、GEDCOMを管理します。</p><div class="button-row"><button id="openSnapshotsButton" class="secondary-button" type="button">スナップショット</button><button id="exportTreeJsonButton" class="secondary-button" type="button">この家系図をJSON保存</button><button id="openGedcomButton" class="secondary-button" type="button">GEDCOM入出力</button></div></section>
       <section class="setting-section"><h3>家系図の出力</h3><p>存命人物の情報を保護した状態で、画像保存または印刷できます。</p><div class="button-row"><button id="openPngButton" class="secondary-button" type="button">家系図を画像保存</button><button id="openPrintButton" class="secondary-button" type="button">印刷・PDF保存</button></div></section>
-      <section class="setting-section"><h3>データのバックアップ</h3><p>人物・関係・写真・表示設定・重複除外情報を、ひとつのJSONファイルに保存します。</p><div class="button-row"><button id="exportButton" class="primary-button" type="button">JSONを書き出す</button><label class="secondary-button file-button" for="importInput">JSONから復元</label><input id="importInput" type="file" accept="application/json,.json" hidden></div></section>
-      <section class="setting-section"><h3>サンプルデータ</h3><p>試作3の表示確認用データで現在データを置き換えます。</p><button id="resetSampleButton" class="secondary-button" type="button">サンプルデータを再登録</button></section>
+      <section class="setting-section"><h3>データのバックアップ</h3><p>全家系図・人物・関係・写真・資料添付・表示設定を、ひとつのJSONファイルに保存します。</p><label class="field"><span>JSONの復元方法</span><select id="importMode"><option value="new">新しい家系図として復元（推奨）</option><option value="append">同じIDが存在しない場合のみ追加</option><option value="replace">現在の家系図を置き換える</option></select></label><p class="helper-text">置き換えは家系図単体バックアップのみ利用でき、実行前に自動スナップショットを作成します。</p><div class="button-row"><button id="exportButton" class="primary-button" type="button">全体JSONを書き出す</button><label class="secondary-button file-button" for="importInput">JSONから復元</label><input id="importInput" type="file" accept="application/json,.json" hidden></div></section>
+      <section class="setting-section"><h3>サンプルデータ</h3><p>試作4の表示確認用データで現在の家系図を置き換えます。事前スナップショットを作成します。</p><button id="resetSampleButton" class="secondary-button" type="button">サンプルデータを再登録</button></section>
       <section class="setting-section danger-section"><h3>全データ削除</h3><p>この端末に保存した人物・関係・写真・除外情報をすべて削除します。</p><button id="deleteAllButton" class="danger-button" type="button">全データを削除</button></section>
-      <section class="setting-section app-info"><h3>アプリ情報</h3><dl><div><dt>バージョン</dt><dd>Ver.1.0 試作3</dd></div><div><dt>内部バージョン</dt><dd>1.0.0-prototype.3</dd></div><div><dt>保存先</dt><dd>この端末のIndexedDB</dd></div><div><dt>通信</dt><dd>外部送信なし</dd></div></dl></section>
+      <section class="setting-section app-info"><h3>アプリ情報</h3><dl><div><dt>バージョン</dt><dd>Ver.1.0 試作4</dd></div><div><dt>内部バージョン</dt><dd>1.0.0-prototype.4</dd></div><div><dt>保存先</dt><dd>この端末のIndexedDB</dd></div><div><dt>通信</dt><dd>外部送信なし</dd></div></dl></section>
     </div>
   </dialog>
+
+  <dialog id="treeManagerDialog" class="app-dialog wide-dialog v4-dialog"><div class="dialog-header"><div><p class="eyebrow">複数の家系図</p><h2>家系図を切り替え・管理</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div class="dialog-body"><div class="button-row"><button id="newTreeButton" class="primary-button" type="button">新しい家系図</button><label class="checkbox-label"><input id="showArchivedTrees" type="checkbox"><span>アーカイブも表示</span></label></div><div id="treeManagerList" class="tree-manager-list"></div><p class="helper-text">家系図を削除すると人物・関係・出来事・資料・添付・引用が対象になります。削除前に手動スナップショットを残します。</p></div></dialog>
+
+  <dialog id="treeFormDialog" class="app-dialog form-dialog compact-dialog v4-dialog"><form id="treeForm" method="dialog"><div class="dialog-header"><div><p class="eyebrow">家系図の情報</p><h2 id="treeFormTitle">家系図を作成</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div class="dialog-body"><input id="treeId" type="hidden"><label>家系図名<input id="treeName" maxlength="100" required></label><label>説明<textarea id="treeDescription" rows="4" maxlength="1000"></textarea></label><label>表紙色<input id="treeCoverColor" type="color" value="#557c64"></label><p id="treeFormError" class="form-error" hidden></p></div><div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button class="primary-button" type="submit">保存</button></div></form></dialog>
+
+  <dialog id="transferDialog" class="app-dialog form-dialog compact-dialog v4-dialog"><form id="transferForm" method="dialog"><div class="dialog-header"><div><p class="eyebrow">人物の所属</p><h2>別の家系図へコピー・移動</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div class="dialog-body"><input id="transferPersonId" type="hidden"><p id="transferPersonLabel" class="soft-callout"></p><label>コピー・移動先<select id="transferTargetTree" required></select></label><label>操作<select id="transferMode"><option value="copy">コピー</option><option value="move">移動</option></select></label><label class="checkbox-label"><input id="transferRelated" type="checkbox"><span>関係でつながる人物も含める</span></label><div class="warning-callout"><strong>対象外の関係は引き継がれません</strong><p>人物だけを選んだ場合、相手が移動対象にいない関係はコピーしません。写真、対象の出来事・出典・引用・添付は可能な範囲で複製します。</p></div><p id="transferError" class="form-error" hidden></p></div><div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button class="primary-button" type="submit">実行</button></div></form></dialog>
+
+  <dialog id="sourceDialog" class="app-dialog form-dialog wide-dialog v4-dialog"><form id="sourceForm" method="dialog"><div class="dialog-header"><div><p class="eyebrow">情報の根拠</p><h2 id="sourceDialogTitle">資料を追加</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div class="dialog-body"><input id="sourceId" type="hidden"><div class="form-grid"><label class="full-width">資料名<input id="sourceTitle" maxlength="200" required></label><label>種類<select id="sourceType"></select></label><label>信頼性<select id="sourceReliability"><option value="high">信頼性が高い</option><option value="medium">参考情報</option><option value="low">未確認</option><option value="unknown" selected>不明</option></select></label><label>著者・聞き取り相手<input id="sourceAuthor" maxlength="150"></label><label>発行者<input id="sourcePublisher" maxlength="150"></label><label>発行日・年代<input id="sourceIssuedDate" maxlength="30" placeholder="例：昭和25年、1950年頃"></label><label>取得日<input id="sourceObtainedDate" type="date"></label><label>保管先<input id="sourceRepository" maxlength="200"></label><label>整理番号<input id="sourceReferenceNumber" maxlength="100"></label><label class="full-width">URL<input id="sourceUrl" type="url" maxlength="500" inputmode="url"></label><label class="full-width">メモ<textarea id="sourceNote" rows="4" maxlength="3000"></textarea></label></div><section class="attachment-editor"><div class="section-heading"><div><h3>添付ファイル</h3><p>JPEG・PNG・WebP・PDF、1ファイル20MB、1資料合計50MBまで。</p></div><label class="secondary-button file-button" for="attachmentInput">ファイルを選ぶ</label><input id="attachmentInput" type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.pdf" multiple hidden></div><label class="checkbox-label"><input id="lightenAttachment" type="checkbox"><span>大きい画像は軽量化して保存する</span></label><div id="pendingAttachmentList" class="attachment-list"></div><div id="storedAttachmentList" class="attachment-list"></div></section><p id="sourceFormError" class="form-error" hidden></p></div><div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button id="saveSourceButton" class="primary-button" type="submit">資料を保存</button></div></form></dialog>
+
+  <dialog id="citationDialog" class="app-dialog form-dialog compact-dialog v4-dialog"><form id="citationForm" method="dialog"><div class="dialog-header"><div><p class="eyebrow">根拠を結び付ける</p><h2>資料を引用</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div class="dialog-body"><input id="citationId" type="hidden"><input id="citationTargetType" type="hidden"><input id="citationTargetId" type="hidden"><section><h3>登録済みの出典</h3><div id="citationExistingList" class="citation-list"></div></section><label>資料<select id="citationSourceId" required></select></label><label>対象項目<select id="citationFieldName"><option value="name">氏名</option><option value="birthDate">生年月日</option><option value="deathDate">没年月日</option><option value="birthplace">出身地</option><option value="formerFamilyName">旧姓</option><option value="parentRelationship">親子関係</option><option value="partnerRelationship">婚姻関係</option><option value="other">その他</option></select></label><label>確認状態<select id="citationVerificationStatus"><option value="confirmed">確認済み</option><option value="probable">可能性が高い</option><option value="unconfirmed" selected>未確認</option><option value="disputed">情報が食い違っている</option></select></label><label>頁・箇所<input id="citationPage" maxlength="100"></label><label>引用文<textarea id="citationQuotedText" rows="4" maxlength="2000"></textarea></label><label>メモ<textarea id="citationNote" rows="3" maxlength="1000"></textarea></label><p id="citationFormError" class="form-error" hidden></p></div><div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button class="primary-button" type="submit">引用を保存</button></div></form></dialog>
+
+  <dialog id="eventDialog" class="app-dialog form-dialog wide-dialog v4-dialog"><form id="eventForm" method="dialog"><div class="dialog-header"><div><p class="eyebrow">人物の人生</p><h2 id="eventDialogTitle">出来事を追加</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div class="dialog-body"><input id="eventId" type="hidden"><div class="form-grid"><label class="full-width">人物<select id="eventPersonIds" multiple size="4" required></select><small class="full-width helper-text">複数人の出来事はCtrlキーまたはタップで選択します。</small><label>種類<select id="eventType"></select></label><label>出来事名<input id="eventTitle" maxlength="160" required></label><label>日付精度<select id="eventDatePrecision"><option value="day">年月日</option><option value="month">年月</option><option value="year">年のみ</option><option value="unknown">不明</option></select></label><label>日付<input id="eventDate" maxlength="10" inputmode="numeric" placeholder="1950-03-12 / 1950-03 / 1950"></label><label class="checkbox-label"><input id="eventDateApproximate" type="checkbox"><span>おおよその時期（頃）</span></label><label>終了日<input id="eventEndDate" type="date"></label><label class="full-width">場所<input id="eventPlace" maxlength="180"></label><label>確認状態<select id="eventVerificationStatus"><option value="confirmed">確認済み</option><option value="probable">可能性が高い</option><option value="unconfirmed" selected>未確認</option><option value="disputed">情報が食い違っている</option></select></label><label class="checkbox-label"><input id="eventSensitive" type="checkbox"><span>共有・出力時に注意が必要</span></label><label class="full-width">出典<select id="eventSourceIds" multiple size="3"></select></label><label class="full-width">説明<textarea id="eventDescription" rows="4" maxlength="3000"></textarea></label></div><p id="eventFormError" class="form-error" hidden></p></div><div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button class="primary-button" type="submit">出来事を保存</button></div></form></dialog>
+
+  <dialog id="personTimelineDialog" class="app-dialog wide-dialog v4-dialog"><div class="dialog-header"><div><p class="eyebrow">人物詳細</p><h2 id="personTimelineTitle">人物年表</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div class="dialog-body"><div class="button-row"><button id="addPersonEventButton" class="primary-button" type="button">出来事を追加</button><button id="citePersonButton" class="secondary-button" type="button">資料を引用</button><button id="transferPersonButton" class="secondary-button" type="button">別の家系図へ</button></div><div id="personCitationList" class="citation-list"></div><div id="personTimelineList" class="timeline-list"></div></div></dialog>
+
+  <dialog id="snapshotDialog" class="app-dialog wide-dialog v4-dialog"><div class="dialog-header"><div><p class="eyebrow">復元可能な履歴</p><h2>スナップショット</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div class="dialog-body"><div class="button-row"><button id="createSnapshotButton" class="primary-button" type="button">手動スナップショットを作成</button><button id="showAllSnapshotsButton" class="secondary-button" type="button">削除済み家系図の履歴も表示</button></div><div class="soft-callout"><span class="callout-icon">i</span><div><strong>完全バックアップとは異なります</strong><p>人物写真は含みますが、資料の添付ファイル本体は複製せず参照情報だけを記録します。</p></div></div><div id="snapshotList" class="snapshot-list"></div></div></dialog>
+
+  <dialog id="gedcomDialog" class="app-dialog wide-dialog v4-dialog"><div class="dialog-header"><div><p class="eyebrow">GEDCOM 5.5.1相当</p><h2>GEDCOM入出力</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div class="dialog-body"><div class="warning-callout"><strong>個人情報を含むファイルです</strong><p>存命人物の情報が含まれる可能性があります。保管場所に注意し、SNSや公開サイトへ直接アップロードしないでください。</p></div><section class="setting-section"><h3>現在の家系図を書き出す</h3><p id="gedcomExportSummary">対象を確認中…</p><button id="exportGedcomButton" class="primary-button" type="button">UTF-8 GEDCOMを書き出す</button></section><section class="setting-section"><h3>新しい家系図として読み込む</h3><p>既存の家系図は上書きしません。ソフトごとの実装差により、独自タグを完全には再現できません。</p><label class="secondary-button file-button" for="gedcomInput">GEDCOMを選ぶ</label><input id="gedcomInput" type="file" accept=".ged,text/plain" hidden><div id="gedcomPreview" class="gedcom-preview"></div><button id="importGedcomButton" class="primary-button" type="button" disabled>解析結果を新しい家系図へ取り込む</button><p id="gedcomError" class="form-error" hidden></p></section></div></dialog>
+
+  <div id="undoBar" class="undo-bar" hidden><span id="undoMessage">操作を完了しました</span><button id="undoButton" type="button">元に戻す</button><button id="dismissUndoButton" type="button" aria-label="閉じる">×</button></div>
 
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
   <style id="printPageStyle"></style>

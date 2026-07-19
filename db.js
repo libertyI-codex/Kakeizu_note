@@ -2,15 +2,22 @@
   "use strict";
 
   const APP_NAME = "家系図ノート";
-  const APP_VERSION = "1.0.0-prototype.3";
-  const SCHEMA_VERSION = 3;
+  const APP_VERSION = "1.0.0-prototype.4";
+  const SCHEMA_VERSION = 4;
   const DB_NAME = "family-tree-note";
-  const DB_VERSION = 3;
+  const DB_VERSION = 4;
   const STORE_PERSONS = "persons";
   const STORE_RELATIONSHIPS = "relationships";
   const STORE_SETTINGS = "settings";
   const STORE_DUPLICATE_EXCLUSIONS = "duplicateExclusions";
+  const STORE_TREES = "trees";
+  const STORE_EVENTS = "events";
+  const STORE_SOURCES = "sources";
+  const STORE_CITATIONS = "citations";
+  const STORE_ATTACHMENTS = "attachments";
+  const STORE_SNAPSHOTS = "snapshots";
   const SETTINGS_KEY = "app";
+  const DEFAULT_TREE_ID = "tree-default";
   const PARENT_TYPES = new Set(["biological", "adoptive", "step"]);
   const PARTNER_TYPES = new Set(["marriage", "partnership"]);
   const PARTNER_STATUSES = new Set(["current", "divorced", "separated", "ended", "unknown"]);
@@ -209,6 +216,51 @@
     }
   }
 
+  function migrateToVersion4(transaction) {
+    const timestamp = nowIso();
+    const treeStore = transaction.objectStore(STORE_TREES);
+    const settingsStore = transaction.objectStore(STORE_SETTINGS);
+    const settingsRequest = settingsStore.get(SETTINGS_KEY);
+    settingsRequest.onsuccess = function () {
+      const oldSettings = normalizeSettings(settingsRequest.result);
+      const nextSettings = Object.assign({}, oldSettings, {
+        activeTreeId: DEFAULT_TREE_ID,
+        migrationV4Complete: true,
+        schemaVersion: 4
+      });
+      treeStore.put({
+        id: DEFAULT_TREE_ID,
+        name: "家族の家系図",
+        description: "",
+        rootPersonId: oldSettings.focusPersonId || "",
+        coverColor: "#557c64",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        isArchived: false
+      });
+      settingsStore.put(nextSettings, SETTINGS_KEY);
+      settingsStore.put(Object.assign({}, oldSettings, { treeId: DEFAULT_TREE_ID, schemaVersion: 4 }), "tree:" + DEFAULT_TREE_ID);
+    };
+    function addTreeFields(storeName, extra) {
+      if (!transaction.objectStoreNames.contains(storeName)) return;
+      transaction.objectStore(storeName).openCursor().onsuccess = function (event) {
+        const cursor = event.target.result;
+        if (!cursor) return;
+        const value = cursor.value;
+        let changed = false;
+        if (!value.treeId) { value.treeId = DEFAULT_TREE_ID; changed = true; }
+        Object.keys(extra || {}).forEach(function (key) {
+          if (!(key in value)) { value[key] = extra[key]; changed = true; }
+        });
+        if (changed) cursor.update(value);
+        cursor.continue();
+      };
+    }
+    addTreeFields(STORE_PERSONS, { verificationStatus: "unconfirmed" });
+    addTreeFields(STORE_RELATIONSHIPS, { verificationStatus: "unconfirmed" });
+    addTreeFields(STORE_DUPLICATE_EXCLUSIONS, {});
+  }
+
   function openDatabase() {
     if (databasePromise) return databasePromise;
     databasePromise = new Promise(function (resolve, reject) {
@@ -231,8 +283,30 @@
         }
         if (!db.objectStoreNames.contains(STORE_SETTINGS)) db.createObjectStore(STORE_SETTINGS);
         if (!db.objectStoreNames.contains(STORE_DUPLICATE_EXCLUSIONS)) db.createObjectStore(STORE_DUPLICATE_EXCLUSIONS, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(STORE_TREES)) db.createObjectStore(STORE_TREES, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(STORE_EVENTS)) db.createObjectStore(STORE_EVENTS, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(STORE_SOURCES)) db.createObjectStore(STORE_SOURCES, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(STORE_CITATIONS)) db.createObjectStore(STORE_CITATIONS, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(STORE_ATTACHMENTS)) db.createObjectStore(STORE_ATTACHMENTS, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(STORE_SNAPSHOTS)) db.createObjectStore(STORE_SNAPSHOTS, { keyPath: "id" });
+        function ensureIndex(storeName, indexName, keyPath) {
+          const store = transaction.objectStore(storeName);
+          if (!store.indexNames.contains(indexName)) store.createIndex(indexName, keyPath, { unique: false });
+        }
+        ensureIndex(STORE_PERSONS, "treeId", "treeId");
+        ensureIndex(STORE_RELATIONSHIPS, "treeId", "treeId");
+        ensureIndex(STORE_DUPLICATE_EXCLUSIONS, "treeId", "treeId");
+        ensureIndex(STORE_EVENTS, "treeId", "treeId");
+        ensureIndex(STORE_SOURCES, "treeId", "treeId");
+        ensureIndex(STORE_CITATIONS, "treeId", "treeId");
+        ensureIndex(STORE_CITATIONS, "sourceId", "sourceId");
+        ensureIndex(STORE_CITATIONS, "targetKey", "targetKey");
+        ensureIndex(STORE_ATTACHMENTS, "treeId", "treeId");
+        ensureIndex(STORE_ATTACHMENTS, "sourceId", "sourceId");
+        ensureIndex(STORE_SNAPSHOTS, "treeId", "treeId");
         if (event.oldVersion > 0 && event.oldVersion < 2) migrateToVersion2(transaction);
         if (event.oldVersion > 0 && event.oldVersion < 3) migrateToVersion3(transaction);
+        if (event.oldVersion > 0 && event.oldVersion < 4) migrateToVersion4(transaction);
       };
       request.onsuccess = function () {
         const db = request.result;

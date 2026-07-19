@@ -27,7 +27,8 @@
     relationshipMenu: null,
     currentView: "tree",
     mergePair: null,
-    photoInfo: null
+    photoInfo: null,
+    searchTimer: null
   };
   const elements = {};
 
@@ -38,20 +39,20 @@
       "centerButton", "focusButton", "detailPanel", "detailContent", "detailBackdrop", "personDialog", "personForm",
       "treeSection", "peopleSection", "peopleCount", "peopleSort", "peopleFilter", "personList", "issuesButton", "mobileMenuButton",
       "personDialogTitle", "personId", "photoPreview", "photoInput", "removePhotoButton", "photoCompressionNotice", "familyName", "givenName",
-      "formerFamilyName", "familyNameKana", "givenNameKana", "nickname", "otherNames", "honorific", "nameMemo", "gender", "birthDate", "isDeceased", "deathDate",
+      "formerFamilyName", "familyNameKana", "givenNameKana", "nickname", "otherNames", "honorific", "nameMemo", "gender", "personVerificationStatus", "birthDate", "isDeceased", "deathDate",
       "birthDatePrecision", "birthDateYear", "birthDateMonth", "birthDateDay", "birthDateApproximate", "birthDatePreview",
       "birthYearField", "birthMonthField", "birthDayField", "birthApproximateField",
       "deathDatePrecision", "deathDateYear", "deathDateMonth", "deathDateDay", "deathDateApproximate", "deathDatePreview",
       "deathYearField", "deathMonthField", "deathDayField", "deathApproximateField", "deathDateLabel", "birthplace", "memo", "personFormError", "savePersonButton", "relationshipDialog",
       "relationshipForm", "relationshipDialogTitle", "relationshipId", "relationshipBaseId", "relationKind", "relationTarget",
       "parentDirectionField", "baseParentLabel", "baseChildLabel", "relationType", "relationStatusLabel", "relationStatus",
-      "relationStartDate", "relationEndDate", "relationMemo", "relationshipFormError", "saveRelationshipButton",
+      "relationStartDate", "relationEndDate", "relationMemo", "relationshipVerificationStatus", "relationshipFormError", "saveRelationshipButton",
       "relativeDialog", "relativeForm", "relativeBaseId", "relativeRole", "relativeNewPanel", "relativeExistingPanel",
       "relativePersonSearch", "relativePersonResults", "quickRelationType", "quickStatusLabel", "quickStatus",
       "quickStartDate", "quickEndDate", "quickMemo", "relativeFormError", "relativeContinueButton",
       "relationshipMenuDialog", "relationshipMenuTitle", "moveRelationUpButton", "moveRelationDownButton",
       "resetRelationOrderButton", "focusDialog", "focusPersonList", "viewRangeButton", "viewSummary", "viewRangeDialog", "viewRangeForm",
-      "treeViewMode", "kinshipDepth", "includePartners", "showGenerationLabels", "settingsDialog", "exportButton", "importInput",
+      "treeViewMode", "kinshipDepth", "includePartners", "showGenerationLabels", "settingsDialog", "exportButton", "importInput", "importMode",
       "openPeopleButton", "openIssuesButton", "duplicateButton", "issuesDialog", "issuesContent", "duplicateDialog", "duplicateContent",
       "mergeDialog", "mergeForm", "mergeKeepChoices", "mergeFields", "mergeError", "mergeBackupButton", "mergeSubmitButton",
       "openPngButton", "pngDialog", "pngForm", "pngPrivacyMode", "savePngButton", "pngError",
@@ -144,6 +145,10 @@
     return { divorced: "離婚", separated: "別居", ended: "関係終了", unknown: "不明" }[status] || "不明";
   }
 
+  function verificationLabel(status) {
+    return { confirmed: "確認済み", probable: "可能性が高い", unconfirmed: "未確認", disputed: "情報が食い違っている" }[status] || "未確認";
+  }
+
   function avatarHtml(person, className) {
     const classValue = className || "mini-avatar";
     if (person.photo) return "<span class=\"" + classValue + "\"><img src=\"" + escapeHtml(person.photo) + "\" alt=\"\"></span>";
@@ -215,15 +220,18 @@
   }
 
   function parentLineClass(relationships) {
-    if (relationships.some(function (item) { return item.relationshipType === "adoptive"; })) return "tree-link tree-parent-adoptive";
-    if (relationships.some(function (item) { return item.relationshipType === "step"; })) return "tree-link tree-parent-step";
-    return "tree-link";
+    let className = "tree-link";
+    if (relationships.some(function (item) { return item.relationshipType === "adoptive"; })) className += " tree-parent-adoptive";
+    else if (relationships.some(function (item) { return item.relationshipType === "step"; })) className += " tree-parent-step";
+    if (relationships.some(function (item) { return item.verificationStatus && item.verificationStatus !== "confirmed"; })) className += " is-unverified";
+    return className;
   }
 
   function partnerLineClass(relationship) {
     let className = "tree-link tree-partner-link";
     if (relationship.status === "separated") className += " is-separated";
     if (relationship.status === "unknown") className += " is-unknown";
+    if (relationship.verificationStatus && relationship.verificationStatus !== "confirmed") className += " is-unverified";
     return className;
   }
 
@@ -371,6 +379,12 @@
       const focus = svgElement("text", { class: "tree-node-focus-text", x: 26.5, y: 21 });
       focus.textContent = "基準";
       group.appendChild(focus);
+    }
+    if (person.verificationStatus && person.verificationStatus !== "confirmed") {
+      group.appendChild(svgElement("circle", { class: "tree-node-verification", cx: cardWidth - 14, cy: cardHeight - 14, r: 7 }));
+      const verify = svgElement("text", { class: "tree-node-verification-text", x: cardWidth - 14, y: cardHeight - 11.5 });
+      verify.textContent = person.verificationStatus === "disputed" ? "!" : "?";
+      group.appendChild(verify);
     }
     return group;
   }
@@ -634,12 +648,14 @@
     const formerName = person.formerFamilyName ? "旧姓：" + person.formerFamilyName : "";
     const nameExtras = [person.nickname ? "通称：" + person.nickname : "", person.otherNames ? "別名：" + person.otherNames : "", person.honorific ? "敬称・補足：" + person.honorific : "", person.nameMemo ? "名前の補足：" + person.nameMemo : ""].filter(Boolean);
     const focusChip = person.id === state.settings.focusPersonId ? "<span class=\"focus-chip\">基準人物</span>" : "";
+    const verificationChip = "<span class=\"verification-chip is-" + escapeHtml(person.verificationStatus || "unconfirmed") + "\">" + escapeHtml(verificationLabel(person.verificationStatus)) + "</span>";
+    elements.detailContent.dataset.personId = person.id;
     elements.detailContent.innerHTML =
       "<div class=\"detail-inner\"><div class=\"detail-topbar\"><button class=\"text-button\" type=\"button\" data-set-focus>基準人物にする</button><button class=\"icon-button\" type=\"button\" data-close-detail aria-label=\"詳細を閉じる\">×</button></div>" +
       "<section class=\"detail-hero\">" + avatarHtml(person, "detail-photo") + "<h2>" + escapeHtml(fullName(person)) + "</h2>" +
       (formerName ? "<p class=\"former-name\">" + escapeHtml(formerName) + "</p>" : "") +
       (person.nickname ? "<p class=\"nickname\">「" + escapeHtml(person.nickname) + "」</p>" : "") +
-      (person.isDeceased ? "<span class=\"deceased-chip\">故人</span>" : "") + focusChip + "</section>" +
+      (person.isDeceased ? "<span class=\"deceased-chip\">故人</span>" : "") + focusChip + verificationChip + "</section>" +
       "<div class=\"detail-actions\"><button class=\"primary-button add-relative-primary\" type=\"button\" data-add-relative>親族を追加</button><button class=\"secondary-button\" type=\"button\" data-edit-person>人物を編集</button><button class=\"secondary-button\" type=\"button\" data-add-relation>既存人物と関係を追加</button></div>" +
       "<section class=\"detail-section\"><h3>基本情報</h3><dl class=\"detail-list\">" +
       "<div><dt>生年月日</dt><dd>" + escapeHtml(formatPersonDate(person, "birth", "生年不明")) + "</dd></div>" +
@@ -667,6 +683,7 @@
     elements.honorific.value = person ? person.honorific : "";
     elements.nameMemo.value = person ? person.nameMemo : "";
     elements.gender.value = person ? person.gender : ((options && options.suggestedGender) || "");
+    elements.personVerificationStatus.value = person ? (person.verificationStatus || "unconfirmed") : "unconfirmed";
     elements.isDeceased.checked = Boolean(person && person.isDeceased);
     fillDateEditor("birth", person);
     fillDateEditor("death", person);
@@ -834,6 +851,7 @@
     const candidates = relationship ? state.persons.filter(function (person) { return person.id === targetId; }) : state.persons.filter(function (person) { return person.id !== base.id; });
     elements.relationTarget.innerHTML = candidates.map(function (person) { return "<option value=\"" + escapeHtml(person.id) + "\">" + escapeHtml(fullName(person)) + "</option>"; }).join("");
     elements.relationTarget.value = targetId || (candidates[0] && candidates[0].id) || "";
+    elements.relationshipVerificationStatus.value = relationship ? (relationship.verificationStatus || "unconfirmed") : "unconfirmed";
     elements.relationKind.value = relationship ? relationship.type : "parent-child";
     elements.relationKind.disabled = Boolean(relationship);
     elements.relationTarget.disabled = Boolean(relationship);
@@ -1316,7 +1334,7 @@
     elements.treeViewMode.addEventListener("change", updateKinshipField);
     elements.retryButton.addEventListener("click", bootData);
     elements.privacyNotice.querySelector("[data-dismiss-notice]").addEventListener("click", function () { elements.privacyNotice.hidden = true; });
-    elements.personSearch.addEventListener("input", function () { renderSearchResults(); renderPersonList(); });
+    elements.personSearch.addEventListener("input", function () { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(function () { renderSearchResults(); renderPersonList(); }, 140); });
     elements.searchResults.addEventListener("click", function (event) {
       const result = event.target.closest("[data-search-person]");
       if (!result) return;
@@ -1403,7 +1421,7 @@
       birthDate: birth.value, birthDatePrecision: birth.precision, birthDateApproximate: birth.approximate,
       deathDate: death.value, deathDatePrecision: death.precision, deathDateApproximate: death.approximate,
       isDeceased: elements.isDeceased.checked, birthplace: elements.birthplace.value,
-      photo: state.photoValue, memo: elements.memo.value
+      photo: state.photoValue, memo: elements.memo.value, verificationStatus: elements.personVerificationStatus.value
     };
   }
 
@@ -1459,7 +1477,8 @@
       await DB.saveRelationship({
         id: elements.relationshipId.value, type: kind, fromPersonId: fromPersonId, toPersonId: toPersonId,
         relationshipType: elements.relationType.value, status: kind === "partner" ? elements.relationStatus.value : "",
-        startDate: elements.relationStartDate.value, endDate: elements.relationEndDate.value, memo: elements.relationMemo.value
+        startDate: elements.relationStartDate.value, endDate: elements.relationEndDate.value, memo: elements.relationMemo.value,
+        verificationStatus: elements.relationshipVerificationStatus.value
       });
       elements.relationshipDialog.close();
       elements.relationKind.disabled = false;
@@ -1580,12 +1599,13 @@
   }
 
   async function exportBackup() {
+    if (!globalThis.confirm("JSONバックアップには存命人物の個人情報と写真・添付ファイルが含まれる可能性があります。\n保管場所に注意し、SNSや公開サイトへ直接アップロードしないでください。書き出しますか？")) return;
     setBusy(elements.exportButton, true, "作成中…");
     try {
       const backup = await DB.createBackup();
       const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json;charset=utf-8" });
       downloadBlob(blob, "family-tree-note-backup-" + new Date().toISOString().slice(0, 10).replace(/-/g, "") + ".json");
-      showToast("試作3形式のバックアップを書き出しました。");
+      showToast("試作4の全体バックアップを書き出しました。");
     } catch (error) { showToast(readableError(error, "バックアップを作成できませんでした。"), true); }
     finally { setBusy(elements.exportButton, false); }
   }
@@ -1595,23 +1615,25 @@
     elements.importInput.value = "";
     if (!file) return;
     if (file.size > 60 * 1024 * 1024) { showToast("バックアップファイルが大きすぎます。", true); return; }
-    if (!globalThis.confirm("現在の全データを、選択したバックアップの内容で置き換えますか？")) return;
+    const mode = elements.importMode ? elements.importMode.value : "new";
+    const modeLabel = mode === "replace" ? "現在の家系図を置き換え" : mode === "append" ? "IDが重複しないデータだけを追加し" : "新しい家系図として復元し";
+    if (!globalThis.confirm("バックアップを" + modeLabel + "ます。\n復元前に自動スナップショットを作成します。続けますか？")) return;
     try {
       const text = await file.text();
       let value;
       try { value = JSON.parse(text); } catch (error) { throw new Error("JSONファイルを読み取れません。ファイルが壊れていないか確認してください。"); }
-      await DB.restoreBackup(value);
+      await DB.restoreBackup(value, { mode: mode });
       closeDetail();
       await refreshData({ center: true });
       elements.settingsDialog.close();
-      showToast("バックアップから復元しました。");
+      showToast("バックアップを復元しました。");
     } catch (error) { showToast(readableError(error, "バックアップを復元できませんでした。"), true); }
   }
 
   function exportSvgStyles() {
     return "text{font-family:'Yu Gothic UI','Hiragino Kaku Gothic ProN',Meiryo,sans-serif}" +
       ".tree-link{fill:none;stroke:#9aab9e;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.tree-partner-link{stroke:#718c79;stroke-width:3}.tree-partner-link.is-separated{stroke-dasharray:11 8}.tree-partner-link.is-unknown{stroke:#aeb7b0;stroke-width:2}.tree-partner-marker{stroke:#61776a;stroke-width:2.4}.tree-parent-adoptive{stroke-dasharray:10 7}.tree-parent-step{stroke-width:1.6;stroke-dasharray:2 7}.tree-disconnected-divider{stroke:#c8c9bf;stroke-width:1.5;stroke-dasharray:5 7}.tree-disconnected-label{fill:#68756d;font-size:13px;font-weight:700}" +
-      ".tree-generation-label{fill:#557c64;font-size:13px;font-weight:700}.tree-node-card{fill:#fffef9;stroke:#d6d5c9;stroke-width:1.5}.tree-node.is-focus .tree-node-card{stroke:#557c64;stroke-width:3}.tree-node-photo-bg{fill:#e3eee5}.tree-node-initial{fill:#3f6250;font-size:23px;font-weight:700;text-anchor:middle;dominant-baseline:central}.tree-node-name{fill:#2c3a32;font-size:16px;font-weight:700;text-anchor:middle}.tree-node-former{fill:#68756d;font-size:11px;text-anchor:middle}.tree-node-years{fill:#68756d;font-size:12px;text-anchor:middle}.tree-node-deceased{fill:#ecebe4;stroke:#d6d5c9}.tree-node-deceased-text{fill:#68756d;font-size:10px;text-anchor:middle}.tree-node-focus-badge{fill:#557c64}.tree-node-focus-text{fill:white;font-size:9px;font-weight:700;text-anchor:middle}";
+      ".tree-generation-label{fill:#557c64;font-size:13px;font-weight:700}.tree-link.is-unverified{stroke-dasharray:4 5}.tree-node-card{fill:#fffef9;stroke:#d6d5c9;stroke-width:1.5}.tree-node.is-focus .tree-node-card{stroke:#557c64;stroke-width:3}.tree-node-photo-bg{fill:#e3eee5}.tree-node-initial{fill:#3f6250;font-size:23px;font-weight:700;text-anchor:middle;dominant-baseline:central}.tree-node-name{fill:#2c3a32;font-size:16px;font-weight:700;text-anchor:middle}.tree-node-former{fill:#68756d;font-size:11px;text-anchor:middle}.tree-node-years{fill:#68756d;font-size:12px;text-anchor:middle}.tree-node-deceased{fill:#ecebe4;stroke:#d6d5c9}.tree-node-deceased-text{fill:#68756d;font-size:10px;text-anchor:middle}.tree-node-focus-badge{fill:#557c64}.tree-node-focus-text{fill:white;font-size:9px;font-weight:700;text-anchor:middle}.tree-node-verification{fill:#fff4d8;stroke:#8b7041}.tree-node-verification-text{fill:#6c5328;font-size:10px;font-weight:700;text-anchor:middle}";
   }
 
   function privacyInitial(person) {
@@ -1801,9 +1823,9 @@
   }
 
   async function resetSamples() {
-    if (!globalThis.confirm("現在の全データを削除し、試作3のサンプル家族に置き換えますか？\n必要なデータは先にJSONへ書き出してください。")) return;
+    if (!globalThis.confirm("現在の家系図を試作4のサンプル家族に置き換えますか？\n置き換え前に自動スナップショットを作成します。")) return;
     setBusy(elements.resetSampleButton, true, "登録中…");
-    try { await DB.resetSampleData(); closeDetail(); await refreshData({ center: true }); elements.settingsDialog.close(); showToast("試作3のサンプルデータを再登録しました。"); }
+    try { await DB.resetSampleData(); closeDetail(); await refreshData({ center: true }); elements.settingsDialog.close(); showToast("試作4のサンプルデータを再登録しました。"); }
     catch (error) { showToast(readableError(error, "サンプルデータを登録できませんでした。"), true); }
     finally { setBusy(elements.resetSampleButton, false); }
   }
