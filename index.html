@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#557c64">
+  <meta name="description" content="不完全な年月日、人物整理、範囲表示、プライバシー印刷に対応した端末内保存の家系図ノート">
+  <meta name="application-version" content="1.0.0-prototype.3">
+  <title>家系図ノート</title>
+  <script>
+    if (/^https?:$/.test(location.protocol)) {
+      const manifestLink = document.createElement("link");
+      manifestLink.rel = "manifest";
+      manifestLink.href = "./manifest.webmanifest";
+      document.head.appendChild(manifestLink);
+    }
+  </script>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <script defer src="./db.js"></script>
+  <script defer src="./tree-layout.js"></script>
+  <script defer src="./app.js"></script>
+</head>
+<body>
+  <noscript><div class="fatal-error">家系図ノートを使うにはJavaScriptを有効にしてください。</div></noscript>
+
+  <div id="app" class="app-shell">
+    <header class="app-header">
+      <div class="brand" aria-label="家系図ノート ホーム">
+        <span class="brand-mark" aria-hidden="true">家</span>
+        <div><h1>家系図ノート</h1><p>家族のつながりを、端末の中に</p></div>
+      </div>
+
+      <nav class="primary-nav" aria-label="画面">
+        <button class="is-active" type="button" data-app-view="tree">家系図</button>
+        <button type="button" data-app-view="people">人物一覧</button>
+      </nav>
+
+      <div class="search-wrap">
+        <label class="search-box" for="personSearch"><span aria-hidden="true">⌕</span><input id="personSearch" type="search" placeholder="人物を検索" autocomplete="off" enterkeyhint="search"></label>
+        <div id="searchResults" class="search-results" role="listbox" hidden></div>
+      </div>
+
+      <button id="menuButton" class="icon-button header-menu" type="button" aria-label="設定を開く" aria-haspopup="dialog"><span aria-hidden="true">☰</span></button>
+    </header>
+
+    <main class="main-content">
+      <section id="treeSection" class="tree-section app-view" aria-label="家系図">
+        <div id="privacyNotice" class="privacy-notice"><span aria-hidden="true">●</span> データはこの端末内だけに保存されます<button type="button" data-dismiss-notice aria-label="お知らせを閉じる">×</button></div>
+        <button id="viewSummary" class="view-summary" type="button">全員を表示</button>
+        <div id="treeStage" class="tree-stage">
+          <svg id="treeSvg" aria-label="家系図" role="img"><g id="treeViewport"></g></svg>
+          <div id="treeLoading" class="state-message"><span class="spinner" aria-hidden="true"></span><p>家系図を読み込んでいます</p></div>
+          <div id="treeEmpty" class="state-message" hidden><span class="empty-mark" aria-hidden="true">♧</span><h2>表示できる人物がいません</h2><p>人物を追加するか、表示範囲を変更してください。</p><button class="primary-button" type="button" data-add-person>人物を追加</button></div>
+          <div id="treeError" class="state-message error-state" hidden><span class="empty-mark" aria-hidden="true">!</span><h2>読み込みに失敗しました</h2><p id="treeErrorMessage">ページを再読み込みしてください。</p><button id="retryButton" class="secondary-button" type="button">もう一度試す</button></div>
+        </div>
+        <div class="tree-toolbar" aria-label="家系図の表示操作">
+          <button id="zoomOutButton" type="button" aria-label="縮小">−</button>
+          <button id="zoomInButton" type="button" aria-label="拡大">＋</button>
+          <button id="centerButton" type="button" aria-label="家系図を中央に戻す"><span aria-hidden="true">◎</span><span class="toolbar-label"> 中央へ</span></button>
+          <button id="focusButton" type="button" aria-label="基準人物を変更"><span aria-hidden="true">♙</span><span class="toolbar-label"> 基準人物</span></button>
+          <button id="viewRangeButton" type="button" aria-label="表示範囲を変更"><span aria-hidden="true">◌</span><span class="toolbar-label"> 表示範囲</span></button>
+        </div>
+        <button class="fab" type="button" data-add-person aria-label="人物を追加"><span aria-hidden="true">＋</span><span>人物を追加</span></button>
+      </section>
+
+      <section id="peopleSection" class="people-section app-view" aria-label="人物一覧" hidden>
+        <div class="people-page">
+          <div class="people-heading">
+            <div><p class="eyebrow">登録データ</p><h2>人物一覧 <span id="peopleCount" class="count-chip">0人</span></h2><p>家系図に表示されていない人物も、ここから確認できます。</p></div>
+            <div class="button-row"><button id="issuesButton" class="secondary-button" type="button">情報不足を確認</button><button class="primary-button" type="button" data-add-person>人物を追加</button></div>
+          </div>
+          <div class="people-controls">
+            <label>並び替え<select id="peopleSort"><option value="name">氏名順</option><option value="kana">よみがな順</option><option value="birth">生年順</option><option value="updated">更新日順</option><option value="created">作成日順</option></select></label>
+            <label>絞り込み<select id="peopleFilter"><option value="all">全員</option><option value="living">存命</option><option value="deceased">故人</option><option value="birth-unknown">生年月日不明</option><option value="no-photo">写真なし</option><option value="no-parent">親が未登録</option><option value="unrelated">関係のない人物</option><option value="incomplete">情報不足</option></select></label>
+          </div>
+          <div id="personList" class="person-list"></div>
+        </div>
+      </section>
+
+      <aside id="detailPanel" class="detail-panel" aria-label="人物詳細" aria-hidden="true"><div class="sheet-handle" aria-hidden="true"></div><div id="detailContent"></div></aside>
+      <button id="detailBackdrop" class="panel-backdrop" type="button" aria-label="人物詳細を閉じる" hidden></button>
+    </main>
+
+    <nav class="mobile-nav" aria-label="画面"><button class="is-active" type="button" data-app-view="tree"><span aria-hidden="true">♧</span>家系図</button><button type="button" data-app-view="people"><span aria-hidden="true">☷</span>人物一覧</button><button id="mobileMenuButton" type="button"><span aria-hidden="true">☰</span>設定</button></nav>
+  </div>
+
+  <dialog id="personDialog" class="app-dialog form-dialog">
+    <form id="personForm" method="dialog" novalidate>
+      <div class="dialog-header"><div><p class="eyebrow">人物情報</p><h2 id="personDialogTitle">人物を追加</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div>
+      <div class="dialog-body">
+        <input id="personId" type="hidden"><input id="birthDate" type="hidden"><input id="deathDate" type="hidden">
+        <section class="photo-editor" aria-label="写真">
+          <div id="photoPreview" class="photo-preview" aria-hidden="true">写</div>
+          <div><label class="secondary-button file-button" for="photoInput">写真を選ぶ</label><input id="photoInput" type="file" accept="image/*" hidden><button id="removePhotoButton" class="text-button" type="button">写真を外す</button><p id="photoCompressionNotice">写真は長辺1200px以内へ調整して端末内に保存します。</p></div>
+        </section>
+
+        <fieldset class="form-section-fieldset"><legend>基本の氏名</legend>
+          <div class="form-grid name-grid no-divider">
+            <label>姓 <input id="familyName" autocomplete="family-name" maxlength="60"></label>
+            <label>名 <input id="givenName" autocomplete="given-name" maxlength="60" required><span class="required">必須</span></label>
+            <label>旧姓 <input id="formerFamilyName" maxlength="60"></label>
+            <label>敬称・続柄表記 <input id="honorific" maxlength="40" placeholder="例：祖父、○○家当主"></label>
+            <label>姓（よみ） <input id="familyNameKana" maxlength="80"></label>
+            <label>名（よみ） <input id="givenNameKana" maxlength="80"></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="form-section-fieldset"><legend>通称・別名</legend>
+          <div class="form-grid">
+            <label>通称・ニックネーム <input id="nickname" maxlength="80"></label>
+            <label>別名・幼名など <input id="otherNames" maxlength="300" placeholder="複数ある場合は読点で区切る"></label>
+            <label class="full-width">名前の補足 <textarea id="nameMemo" rows="2" maxlength="500" placeholder="戸籍上の表記違い、漢字が不明な場合の補足など"></textarea></label>
+          </div>
+        </fieldset>
+
+        <div class="form-grid person-basic-grid">
+          <label>性別（任意）<select id="gender"><option value="">未設定</option><option value="female">女性</option><option value="male">男性</option><option value="nonbinary">ノンバイナリー</option><option value="other">その他</option><option value="undisclosed">回答しない</option></select></label>
+          <label class="checkbox-label"><input id="isDeceased" type="checkbox"><span>故人として登録する</span></label>
+        </div>
+
+        <section class="date-editor" data-date-editor="birth">
+          <div class="date-editor-heading"><h3>生年月日・生年</h3><output id="birthDatePreview">生年不明</output></div>
+          <div class="date-editor-grid">
+            <label>分かっている範囲<select id="birthDatePrecision"><option value="day">年月日</option><option value="month">年月</option><option value="year">年のみ</option><option value="unknown">不明</option></select></label>
+            <label id="birthYearField">年<input id="birthDateYear" type="number" inputmode="numeric" min="1" max="9999" placeholder="1950"></label>
+            <label id="birthMonthField">月<select id="birthDateMonth"></select></label>
+            <label id="birthDayField">日<select id="birthDateDay"></select></label>
+            <label id="birthApproximateField" class="checkbox-label date-approx"><input id="birthDateApproximate" type="checkbox"><span>おおよその時期（頃）</span></label>
+          </div>
+        </section>
+
+        <section id="deathDateLabel" class="date-editor" data-date-editor="death">
+          <div class="date-editor-heading"><h3>没年月日・没年</h3><output id="deathDatePreview">没年不明</output></div>
+          <div class="date-editor-grid">
+            <label>分かっている範囲<select id="deathDatePrecision"><option value="day">年月日</option><option value="month">年月</option><option value="year">年のみ</option><option value="unknown">不明</option></select></label>
+            <label id="deathYearField">年<input id="deathDateYear" type="number" inputmode="numeric" min="1" max="9999" placeholder="2020"></label>
+            <label id="deathMonthField">月<select id="deathDateMonth"></select></label>
+            <label id="deathDayField">日<select id="deathDateDay"></select></label>
+            <label id="deathApproximateField" class="checkbox-label date-approx"><input id="deathDateApproximate" type="checkbox"><span>おおよその時期（頃）</span></label>
+          </div>
+        </section>
+
+        <div class="form-grid">
+          <label class="full-width">出身地 <input id="birthplace" maxlength="120"></label>
+          <label class="full-width">メモ <textarea id="memo" rows="5" maxlength="3000" placeholder="人柄、思い出、仕事など自由に記録できます"></textarea></label>
+        </div>
+        <p id="personFormError" class="form-error" role="alert" hidden></p>
+      </div>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button id="savePersonButton" class="primary-button" type="submit">保存する</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="relationshipDialog" class="app-dialog form-dialog compact-dialog">
+    <form id="relationshipForm" method="dialog" novalidate>
+      <div class="dialog-header"><div><p class="eyebrow">つながり</p><h2 id="relationshipDialogTitle">関係を追加</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div>
+      <div class="dialog-body">
+        <input id="relationshipId" type="hidden"><input id="relationshipBaseId" type="hidden">
+        <label>関係の種類<select id="relationKind"><option value="parent-child">親子</option><option value="partner">夫婦・パートナー</option></select></label>
+        <label>相手の人物<select id="relationTarget" required></select></label>
+        <fieldset id="parentDirectionField"><legend>親子の向き</legend><label class="radio-label"><input type="radio" name="parentDirection" value="base-parent" checked><span id="baseParentLabel">この人物が相手の親</span></label><label class="radio-label"><input type="radio" name="parentDirection" value="base-child"><span id="baseChildLabel">この人物が相手の子</span></label></fieldset>
+        <label>関係の詳細<select id="relationType"></select></label>
+        <label id="relationStatusLabel" hidden>現在の状態<select id="relationStatus"><option value="current">婚姻中・関係継続中</option><option value="divorced">離婚</option><option value="separated">別居</option><option value="ended">関係終了</option><option value="unknown">不明</option></select></label>
+        <div class="form-grid compact-grid"><label>開始日 <input id="relationStartDate" type="date"></label><label>終了日 <input id="relationEndDate" type="date"></label></div>
+        <label>メモ <textarea id="relationMemo" rows="3" maxlength="1000"></textarea></label><p id="relationshipFormError" class="form-error" role="alert" hidden></p>
+      </div>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button id="saveRelationshipButton" class="primary-button" type="submit">関係を保存</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="relativeDialog" class="app-dialog form-dialog compact-dialog">
+    <form id="relativeForm" method="dialog" novalidate>
+      <div class="dialog-header"><div><p class="eyebrow">すばやく登録</p><h2>親族を追加</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div>
+      <div class="dialog-body relative-dialog-body">
+        <input id="relativeBaseId" type="hidden">
+        <label>追加する親族<select id="relativeRole"><option value="parent-father">父または親を追加</option><option value="parent-mother">母または親を追加</option><option value="partner">配偶者・パートナーを追加</option><option value="child">子どもを追加</option></select></label>
+        <div class="segmented-control" role="group" aria-label="人物の選び方"><button class="is-active" type="button" data-relative-source="new">新しい人物を登録</button><button type="button" data-relative-source="existing">登録済み人物から選択</button></div>
+        <section id="relativeNewPanel" class="relative-source-panel"><div class="soft-callout"><span class="callout-icon" aria-hidden="true">＋</span><div><strong>人物情報を入力して追加</strong><p>次の画面で氏名・生年・写真などを入力します。人物と関係は同時に保存されます。</p></div></div></section>
+        <section id="relativeExistingPanel" class="relative-source-panel" hidden><label>登録済み人物を検索<input id="relativePersonSearch" type="search" placeholder="氏名・よみ・旧姓・通称・別名で検索" autocomplete="off"></label><div id="relativePersonResults" class="person-picker relative-picker" role="listbox"></div></section>
+        <section class="relation-details-box"><h3>関係の情報</h3><label>関係の詳細<select id="quickRelationType"></select></label><label id="quickStatusLabel" hidden>現在の状態<select id="quickStatus"><option value="current">婚姻中・関係継続中</option><option value="divorced">離婚</option><option value="separated">別居</option><option value="ended">関係終了</option><option value="unknown">不明</option></select></label><div class="form-grid compact-grid"><label>開始日 <input id="quickStartDate" type="date"></label><label>終了日 <input id="quickEndDate" type="date"></label></div><label>関係のメモ <textarea id="quickMemo" rows="2" maxlength="1000"></textarea></label></section>
+        <p id="relativeFormError" class="form-error" role="alert" hidden></p>
+      </div>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button id="relativeContinueButton" class="primary-button" type="submit">人物情報を入力</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="relationshipMenuDialog" class="app-dialog action-menu-dialog"><div class="dialog-header"><div><p class="eyebrow">つながりの操作</p><h2 id="relationshipMenuTitle">関係を管理</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div class="dialog-body action-menu-body"><button type="button" data-menu-action="open">その人物の詳細を開く</button><button type="button" data-menu-action="edit">関係を編集</button><button id="moveRelationUpButton" type="button" data-menu-action="up">表示順を上へ</button><button id="moveRelationDownButton" type="button" data-menu-action="down">表示順を下へ</button><button id="resetRelationOrderButton" type="button" data-menu-action="reset">基本の順番へ戻す</button><button class="danger-menu-item" type="button" data-menu-action="unlink">関係を解除</button></div></dialog>
+
+  <dialog id="focusDialog" class="app-dialog compact-dialog"><div class="dialog-header"><div><p class="eyebrow">家系図の中心</p><h2>基準人物を選ぶ</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div class="dialog-body"><p class="helper-text">選んだ人物を起点に、表示範囲と世代を計算します。</p><div id="focusPersonList" class="person-picker"></div></div></dialog>
+
+  <dialog id="viewRangeDialog" class="app-dialog form-dialog compact-dialog">
+    <form id="viewRangeForm" method="dialog">
+      <div class="dialog-header"><div><p class="eyebrow">家系図の絞り込み</p><h2>表示範囲</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div>
+      <div class="dialog-body">
+        <label>基準人物からの範囲<select id="treeViewMode"><option value="all">全員</option><option value="direct">直系のみ</option><option value="ancestors">祖先のみ</option><option value="descendants">子孫のみ</option><option value="lineage">祖先と子孫</option><option value="blood">血縁者中心</option><option value="kinship">指定親等以内</option></select></label>
+        <label>家系図上の関係距離<select id="kinshipDepth"><option value="1">1親等</option><option value="2">2親等</option><option value="3">3親等</option><option value="4">4親等</option><option value="5">5親等</option><option value="unlimited">制限なし</option></select></label>
+        <label class="checkbox-label"><input id="includePartners" type="checkbox"><span>配偶者・パートナーを含める</span></label>
+        <label class="checkbox-label"><input id="showGenerationLabels" type="checkbox"><span>世代ラベルを表示する</span></label>
+        <div class="soft-callout"><span class="callout-icon" aria-hidden="true">i</span><div><strong>データは削除されません</strong><p>ここで変わるのは家系図の表示だけです。人物一覧では全員を確認できます。</p></div></div>
+      </div>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button class="primary-button" type="submit">表示を更新</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="issuesDialog" class="app-dialog wide-dialog"><div class="dialog-header"><div><p class="eyebrow">登録を補助</p><h2>情報不足を確認</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div id="issuesContent" class="dialog-body data-review-body"></div></dialog>
+
+  <dialog id="duplicateDialog" class="app-dialog wide-dialog"><div class="dialog-header"><div><p class="eyebrow">人物データの整理</p><h2>重複候補を確認</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div><div class="dialog-body data-review-body"><p class="helper-text">候補を自動統合することはありません。内容を確認して操作してください。</p><div id="duplicateContent" class="duplicate-list"></div></div></dialog>
+
+  <dialog id="mergeDialog" class="app-dialog form-dialog merge-dialog">
+    <form id="mergeForm" method="dialog">
+      <div class="dialog-header"><div><p class="eyebrow">重複人物の整理</p><h2>人物を統合</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div>
+      <div class="dialog-body">
+        <div class="warning-callout"><strong>統合前にJSONバックアップを保存してください</strong><p>統合は人物と関係をまとめて変更します。今回、統合を元に戻す機能はありません。</p><button id="mergeBackupButton" class="secondary-button" type="button">先にJSONを書き出す</button></div>
+        <fieldset><legend>残す人物</legend><div id="mergeKeepChoices" class="merge-keep-choices"></div></fieldset>
+        <p class="helper-text">各項目で残す情報を確認してください。残す側が空欄の場合は、もう一方から自動補完します。</p>
+        <div id="mergeFields" class="merge-fields"></div>
+        <p id="mergeError" class="form-error" role="alert" hidden></p>
+      </div>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button id="mergeSubmitButton" class="danger-button" type="submit">確認して統合する</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="pngDialog" class="app-dialog form-dialog compact-dialog">
+    <form id="pngForm" method="dialog">
+      <div class="dialog-header"><div><p class="eyebrow">端末内で画像化</p><h2>家系図をPNG保存</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div>
+      <div class="dialog-body"><label>存命人物のプライバシー<select id="pngPrivacyMode"><option value="all">すべて表示</option><option value="hide-dates">存命人物の生年月日を隠す</option><option value="hide-photo-dates">存命人物の写真と生年月日を隠す</option><option value="initials">存命人物の氏名をイニシャル表示</option></select></label><div class="soft-callout"><span class="callout-icon" aria-hidden="true">鍵</span><div><strong>通常画面のデータは変わりません</strong><p>プライバシー設定は、保存する画像にだけ適用されます。</p></div></div><p id="pngError" class="form-error" role="alert" hidden></p></div>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button id="savePngButton" class="primary-button" type="submit">PNGを保存</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="printDialog" class="app-dialog form-dialog wide-dialog">
+    <form id="printForm" method="dialog">
+      <div class="dialog-header"><div><p class="eyebrow">ブラウザからPDF保存も可能</p><h2>印刷・PDF保存</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div>
+      <div class="dialog-body">
+        <div class="form-grid"><label class="full-width">タイトル <input id="printTitle" maxlength="120"></label><label class="full-width">補足文 <textarea id="printNote" rows="2" maxlength="500"></textarea></label><label>用紙サイズ<select id="printPaperSize"><option value="auto">自動</option><option value="a4-portrait">A4縦</option><option value="a4-landscape">A4横</option><option value="a3-portrait">A3縦</option><option value="a3-landscape">A3横</option></select></label><label>印刷する人物<select id="printScope"><option value="current">現在の表示範囲</option><option value="all">全員</option></select></label><label class="full-width">存命人物のプライバシー<select id="printPrivacyMode"><option value="all">すべて表示</option><option value="hide-dates">存命人物の生年月日を隠す</option><option value="hide-photo-dates">存命人物の写真と生年月日を隠す</option><option value="initials">存命人物の氏名をイニシャル表示</option></select></label><label class="checkbox-label"><input id="printShowDate" type="checkbox"><span>作成日を表示</span></label><label class="checkbox-label"><input id="printShowGenerationLabels" type="checkbox"><span>世代ラベルを表示</span></label></div>
+        <div id="printPreview" class="print-preview"><strong>印刷プレビュー</strong><p>設定すると、家系図全体を用紙に収まる大きさで準備します。</p></div>
+      </div>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>キャンセル</button><button id="printButton" class="primary-button" type="submit">印刷画面を開く</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="settingsDialog" class="app-dialog settings-dialog">
+    <div class="dialog-header"><div><p class="eyebrow">この端末の設定</p><h2>設定・データ管理</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="閉じる">×</button></div>
+    <div class="dialog-body settings-body">
+      <section class="setting-section"><h3>人物データの確認</h3><p>全人物の確認、情報不足、重複している可能性のある人物を整理します。</p><div class="button-row"><button id="openPeopleButton" class="secondary-button" type="button">人物一覧を開く</button><button id="openIssuesButton" class="secondary-button" type="button">情報不足を確認</button><button id="duplicateButton" class="secondary-button" type="button">重複候補を確認</button></div></section>
+      <section class="setting-section"><h3>家系図の出力</h3><p>存命人物の情報を保護した状態で、画像保存または印刷できます。</p><div class="button-row"><button id="openPngButton" class="secondary-button" type="button">家系図を画像保存</button><button id="openPrintButton" class="secondary-button" type="button">印刷・PDF保存</button></div></section>
+      <section class="setting-section"><h3>データのバックアップ</h3><p>人物・関係・写真・表示設定・重複除外情報を、ひとつのJSONファイルに保存します。</p><div class="button-row"><button id="exportButton" class="primary-button" type="button">JSONを書き出す</button><label class="secondary-button file-button" for="importInput">JSONから復元</label><input id="importInput" type="file" accept="application/json,.json" hidden></div></section>
+      <section class="setting-section"><h3>サンプルデータ</h3><p>試作3の表示確認用データで現在データを置き換えます。</p><button id="resetSampleButton" class="secondary-button" type="button">サンプルデータを再登録</button></section>
+      <section class="setting-section danger-section"><h3>全データ削除</h3><p>この端末に保存した人物・関係・写真・除外情報をすべて削除します。</p><button id="deleteAllButton" class="danger-button" type="button">全データを削除</button></section>
+      <section class="setting-section app-info"><h3>アプリ情報</h3><dl><div><dt>バージョン</dt><dd>Ver.1.0 試作3</dd></div><div><dt>内部バージョン</dt><dd>1.0.0-prototype.3</dd></div><div><dt>保存先</dt><dd>この端末のIndexedDB</dd></div><div><dt>通信</dt><dd>外部送信なし</dd></div></dl></section>
+    </div>
+  </dialog>
+
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <style id="printPageStyle"></style>
+  <section id="printArea" class="print-area" aria-hidden="true"></section>
+  <template id="fatalTemplate"><div class="fatal-error"><h1>家系図ノート</h1><p>アプリを起動できませんでした。</p><button type="button" onclick="location.reload()">再読み込み</button></div></template>
+</body>
+</html>

@@ -1,0 +1,1869 @@
+(function () {
+  "use strict";
+
+  const DB = globalThis.FamilyTreeDB;
+  const Layout = globalThis.TreeLayout;
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const state = {
+    persons: [],
+    relationships: [],
+    duplicateExclusions: [],
+    visiblePersons: [],
+    visibleRelationships: [],
+    settings: null,
+    selectedPersonId: "",
+    layout: null,
+    transform: { x: 0, y: 0, scale: 1 },
+    pointers: new Map(),
+    dragMoved: false,
+    pinch: null,
+    suppressClickUntil: 0,
+    photoValue: "",
+    saveScaleTimer: null,
+    personFormContext: null,
+    personSaving: false,
+    relativeSource: "new",
+    selectedExistingRelativeId: "",
+    relationshipMenu: null,
+    currentView: "tree",
+    mergePair: null,
+    photoInfo: null
+  };
+  const elements = {};
+
+  function cacheElements() {
+    [
+      "personSearch", "searchResults", "menuButton", "privacyNotice", "treeStage", "treeSvg", "treeViewport",
+      "treeLoading", "treeEmpty", "treeError", "treeErrorMessage", "retryButton", "zoomOutButton", "zoomInButton",
+      "centerButton", "focusButton", "detailPanel", "detailContent", "detailBackdrop", "personDialog", "personForm",
+      "treeSection", "peopleSection", "peopleCount", "peopleSort", "peopleFilter", "personList", "issuesButton", "mobileMenuButton",
+      "personDialogTitle", "personId", "photoPreview", "photoInput", "removePhotoButton", "photoCompressionNotice", "familyName", "givenName",
+      "formerFamilyName", "familyNameKana", "givenNameKana", "nickname", "otherNames", "honorific", "nameMemo", "gender", "birthDate", "isDeceased", "deathDate",
+      "birthDatePrecision", "birthDateYear", "birthDateMonth", "birthDateDay", "birthDateApproximate", "birthDatePreview",
+      "birthYearField", "birthMonthField", "birthDayField", "birthApproximateField",
+      "deathDatePrecision", "deathDateYear", "deathDateMonth", "deathDateDay", "deathDateApproximate", "deathDatePreview",
+      "deathYearField", "deathMonthField", "deathDayField", "deathApproximateField", "deathDateLabel", "birthplace", "memo", "personFormError", "savePersonButton", "relationshipDialog",
+      "relationshipForm", "relationshipDialogTitle", "relationshipId", "relationshipBaseId", "relationKind", "relationTarget",
+      "parentDirectionField", "baseParentLabel", "baseChildLabel", "relationType", "relationStatusLabel", "relationStatus",
+      "relationStartDate", "relationEndDate", "relationMemo", "relationshipFormError", "saveRelationshipButton",
+      "relativeDialog", "relativeForm", "relativeBaseId", "relativeRole", "relativeNewPanel", "relativeExistingPanel",
+      "relativePersonSearch", "relativePersonResults", "quickRelationType", "quickStatusLabel", "quickStatus",
+      "quickStartDate", "quickEndDate", "quickMemo", "relativeFormError", "relativeContinueButton",
+      "relationshipMenuDialog", "relationshipMenuTitle", "moveRelationUpButton", "moveRelationDownButton",
+      "resetRelationOrderButton", "focusDialog", "focusPersonList", "viewRangeButton", "viewSummary", "viewRangeDialog", "viewRangeForm",
+      "treeViewMode", "kinshipDepth", "includePartners", "showGenerationLabels", "settingsDialog", "exportButton", "importInput",
+      "openPeopleButton", "openIssuesButton", "duplicateButton", "issuesDialog", "issuesContent", "duplicateDialog", "duplicateContent",
+      "mergeDialog", "mergeForm", "mergeKeepChoices", "mergeFields", "mergeError", "mergeBackupButton", "mergeSubmitButton",
+      "openPngButton", "pngDialog", "pngForm", "pngPrivacyMode", "savePngButton", "pngError",
+      "openPrintButton", "printDialog", "printForm", "printTitle", "printNote", "printPaperSize", "printScope", "printPrivacyMode",
+      "printShowDate", "printShowGenerationLabels", "printPreview", "printButton", "printArea", "printPageStyle",
+      "resetSampleButton", "deleteAllButton", "toastRegion"
+    ].forEach(function (id) { elements[id] = document.getElementById(id); });
+  }
+
+  function escapeHtml(value) {
+    return String(value === null || value === undefined ? "" : value)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+  }
+
+  function fullName(person) {
+    if (!person) return "不明な人物";
+    return ((person.familyName || "") + " " + (person.givenName || "")).trim() || "名前未設定";
+  }
+
+  function initialOf(person) {
+    const name = (person && (person.givenName || person.familyName)) || "人";
+    return Array.from(name)[0] || "人";
+  }
+
+  function compactText(value, length) {
+    const chars = Array.from(value || "");
+    return chars.length > length ? chars.slice(0, length - 1).join("") + "…" : chars.join("");
+  }
+
+  function yearFromDate(value) {
+    return value && /^\d{4}/.test(value) ? value.slice(0, 4) : "";
+  }
+
+  function personDatePrecision(person, kind) {
+    const key = kind + "DatePrecision";
+    return person && person[key] ? person[key] : DB.inferDatePrecision(person && person[kind + "Date"]);
+  }
+
+  function formatPersonDate(person, kind, unknownLabel) {
+    const value = person && person[kind + "Date"];
+    const precision = personDatePrecision(person, kind);
+    if (!value || precision === "unknown") return unknownLabel || "不明";
+    const parts = value.split("-").map(Number);
+    let text = parts[0] + "年";
+    if (precision === "month" || precision === "day") text += parts[1] + "月";
+    if (precision === "day") text += parts[2] + "日";
+    if (person[kind + "DateApproximate"]) text += "頃";
+    return text;
+  }
+
+  function lifeYears(person) {
+    const birth = yearFromDate(person.birthDate);
+    const death = person.isDeceased ? yearFromDate(person.deathDate) : "";
+    if (!birth && !death) return person.isDeceased ? "故人" : "生年 未登録";
+    const birthText = birth ? birth + (person.birthDateApproximate ? "頃" : "") : "?";
+    const deathText = death ? death + (person.deathDateApproximate ? "頃" : "") : "?";
+    if (person.isDeceased) return birthText + " — " + deathText;
+    return birth ? birthText + " —" : "生年 未登録";
+  }
+
+  function formatDate(value) {
+    if (!value) return "未登録";
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    return match ? Number(match[1]) + "年" + Number(match[2]) + "月" + Number(match[3]) + "日" : value;
+  }
+
+  function normalizedPersonText(person) {
+    return DB.normalizeSearchText([
+      person.familyName, person.givenName, person.formerFamilyName, person.familyNameKana, person.givenNameKana,
+      person.nickname, person.otherNames, person.honorific, person.nameMemo, person.birthplace
+    ].join(" "));
+  }
+
+  function matchesPersonSearch(person, query) {
+    const normalized = DB.normalizeSearchText(query);
+    return !normalized || normalizedPersonText(person).includes(normalized);
+  }
+
+  function relationLabel(type) {
+    return { biological: "実親", adoptive: "養親", step: "継親", marriage: "婚姻", partnership: "パートナー" }[type] || "関係";
+  }
+
+  function childRelationLabel(type) {
+    return { biological: "実親子", adoptive: "養親子", step: "継親子" }[type] || "親子";
+  }
+
+  function statusLabel(status, relationshipType) {
+    if (status === "current") return relationshipType === "marriage" ? "婚姻中" : "関係継続中";
+    return { divorced: "離婚", separated: "別居", ended: "関係終了", unknown: "不明" }[status] || "不明";
+  }
+
+  function avatarHtml(person, className) {
+    const classValue = className || "mini-avatar";
+    if (person.photo) return "<span class=\"" + classValue + "\"><img src=\"" + escapeHtml(person.photo) + "\" alt=\"\"></span>";
+    return "<span class=\"" + classValue + "\">" + escapeHtml(initialOf(person)) + "</span>";
+  }
+
+  function findPerson(id) {
+    return state.persons.find(function (person) { return person.id === id; });
+  }
+
+  function findRelationship(id) {
+    return state.relationships.find(function (relationship) { return relationship.id === id; });
+  }
+
+  function showToast(message, isError) {
+    const toast = document.createElement("div");
+    toast.className = "toast" + (isError ? " is-error" : "");
+    toast.textContent = message;
+    elements.toastRegion.appendChild(toast);
+    globalThis.setTimeout(function () { toast.remove(); }, isError ? 5000 : 3200);
+  }
+
+  function readableError(error, fallback) {
+    if (error && typeof error.message === "string" && error.message.trim()) return error.message;
+    return fallback || "処理に失敗しました。";
+  }
+
+  function setBusy(button, busy, busyLabel) {
+    if (!button) return;
+    if (busy) {
+      button.dataset.originalLabel = button.textContent;
+      button.textContent = busyLabel || "処理中…";
+      button.disabled = true;
+    } else {
+      button.textContent = button.dataset.originalLabel || button.textContent;
+      button.disabled = false;
+      delete button.dataset.originalLabel;
+    }
+  }
+
+  async function refreshData(options) {
+    const previousScale = state.transform.scale;
+    const data = await DB.readAll();
+    state.persons = data.persons;
+    state.relationships = data.relationships;
+    state.settings = data.settings;
+    state.duplicateExclusions = data.duplicateExclusions || [];
+    if (state.selectedPersonId && !findPerson(state.selectedPersonId)) closeDetail();
+    renderTree();
+    state.transform.scale = Math.max(0.25, Math.min(2.5, previousScale || Number(data.settings.scale) || 1));
+    applyTransform();
+    if (state.selectedPersonId) renderDetail();
+    renderPersonList();
+    if (options && options.center) requestAnimationFrame(centerTree);
+    if (options && options.revealPersonId) requestAnimationFrame(function () { revealPerson(options.revealPersonId); });
+  }
+
+  function svgElement(name, attributes) {
+    const element = document.createElementNS(SVG_NS, name);
+    Object.keys(attributes || {}).forEach(function (key) { element.setAttribute(key, String(attributes[key])); });
+    return element;
+  }
+
+  function addPath(parent, d, className) {
+    if (!d || /NaN/.test(d)) return null;
+    const path = svgElement("path", { d: d, class: className || "tree-link" });
+    parent.appendChild(path);
+    return path;
+  }
+
+  function parentLineClass(relationships) {
+    if (relationships.some(function (item) { return item.relationshipType === "adoptive"; })) return "tree-link tree-parent-adoptive";
+    if (relationships.some(function (item) { return item.relationshipType === "step"; })) return "tree-link tree-parent-step";
+    return "tree-link";
+  }
+
+  function partnerLineClass(relationship) {
+    let className = "tree-link tree-partner-link";
+    if (relationship.status === "separated") className += " is-separated";
+    if (relationship.status === "unknown") className += " is-unknown";
+    return className;
+  }
+
+  function renderPartnerLine(fragment, relationship, from, to, cardWidth, cardHeight) {
+    const left = from.x < to.x ? from : to;
+    const right = from.x < to.x ? to : from;
+    const y = (left.y + right.y) / 2 + cardHeight / 2;
+    const x1 = left.x + cardWidth;
+    const x2 = right.x;
+    const className = partnerLineClass(relationship);
+    if (left.generation === right.generation && x2 > x1) {
+      const middle = (x1 + x2) / 2;
+      if (relationship.status === "divorced" || relationship.status === "ended") {
+        addPath(fragment, "M " + x1 + " " + y + " H " + (middle - 7), className);
+        addPath(fragment, "M " + (middle + 7) + " " + y + " H " + x2, className);
+        addPath(fragment, "M " + (middle - 4) + " " + (y + 7) + " L " + (middle + 4) + " " + (y - 7), "tree-link tree-partner-marker");
+      } else {
+        addPath(fragment, "M " + x1 + " " + y + " H " + x2, className);
+      }
+      return;
+    }
+    const midY = Math.max(left.y, right.y) + cardHeight + 30;
+    addPath(fragment, "M " + (left.x + cardWidth / 2) + " " + (left.y + cardHeight) + " V " + midY + " H " + (right.x + cardWidth / 2) + " V " + (right.y + cardHeight), className);
+  }
+
+  function renderConnections(fragment, nodeMap, cardWidth, cardHeight, relationships) {
+    const sourceRelationships = relationships || state.relationships;
+    const partnerRelationships = sourceRelationships.filter(function (relationship) { return relationship.type === "partner"; });
+    const partnerKeys = new Set();
+    partnerRelationships.forEach(function (relationship) {
+      const from = nodeMap.get(relationship.fromPersonId);
+      const to = nodeMap.get(relationship.toPersonId);
+      if (!from || !to) return;
+      partnerKeys.add([relationship.fromPersonId, relationship.toPersonId].sort().join("|"));
+      renderPartnerLine(fragment, relationship, from, to, cardWidth, cardHeight);
+    });
+
+    const parentRelationships = sourceRelationships.filter(function (relationship) { return relationship.type === "parent-child"; });
+    const parentsByChild = new Map();
+    parentRelationships.forEach(function (relationship) {
+      if (!parentsByChild.has(relationship.toPersonId)) parentsByChild.set(relationship.toPersonId, []);
+      parentsByChild.get(relationship.toPersonId).push(relationship);
+    });
+    const familyGroups = new Map();
+    const handledLinks = new Set();
+    parentsByChild.forEach(function (relationships, childId) {
+      const parentIds = relationships.map(function (item) { return item.fromPersonId; });
+      let pair = null;
+      for (let i = 0; i < parentIds.length && !pair; i += 1) {
+        for (let j = i + 1; j < parentIds.length; j += 1) {
+          const key = [parentIds[i], parentIds[j]].sort().join("|");
+          if (partnerKeys.has(key)) { pair = [parentIds[i], parentIds[j]]; break; }
+        }
+      }
+      if (!pair) return;
+      const key = pair.slice().sort().join("|");
+      if (!familyGroups.has(key)) familyGroups.set(key, { parentIds: pair, children: [] });
+      const pairRelationships = relationships.filter(function (item) { return pair.includes(item.fromPersonId); });
+      familyGroups.get(key).children.push({ id: childId, relationships: pairRelationships });
+      pair.forEach(function (parentId) { handledLinks.add(parentId + "|" + childId); });
+    });
+
+    familyGroups.forEach(function (family) {
+      const parentA = nodeMap.get(family.parentIds[0]);
+      const parentB = nodeMap.get(family.parentIds[1]);
+      const children = family.children.map(function (item) {
+        return { node: nodeMap.get(item.id), relationships: item.relationships };
+      }).filter(function (item) { return item.node; });
+      if (!parentA || !parentB || !children.length) return;
+      const sourceX = ((parentA.x + cardWidth / 2) + (parentB.x + cardWidth / 2)) / 2;
+      const sourceY = parentA.generation === parentB.generation
+        ? (parentA.y + parentB.y) / 2 + cardHeight / 2
+        : Math.max(parentA.y, parentB.y) + cardHeight;
+      const centers = children.map(function (item) { return item.node.x + cardWidth / 2; });
+      const targetY = Math.min.apply(null, children.map(function (item) { return item.node.y; }));
+      const busY = sourceY + Math.max(32, (targetY - sourceY) * 0.43);
+      const minimum = Math.min.apply(null, centers);
+      const maximum = Math.max.apply(null, centers);
+      addPath(fragment, "M " + sourceX + " " + sourceY + " V " + busY, "tree-link");
+      if (children.length > 1 || sourceX < minimum || sourceX > maximum) {
+        addPath(fragment, "M " + Math.min(sourceX, minimum) + " " + busY + " H " + Math.max(sourceX, maximum), "tree-link");
+      }
+      children.forEach(function (item) {
+        const x = item.node.x + cardWidth / 2;
+        addPath(fragment, "M " + x + " " + busY + " V " + item.node.y, parentLineClass(item.relationships));
+      });
+    });
+
+    parentRelationships.forEach(function (relationship) {
+      if (handledLinks.has(relationship.fromPersonId + "|" + relationship.toPersonId)) return;
+      const parent = nodeMap.get(relationship.fromPersonId);
+      const child = nodeMap.get(relationship.toPersonId);
+      if (!parent || !child) return;
+      const sourceX = parent.x + cardWidth / 2;
+      const sourceY = parent.y + cardHeight;
+      const targetX = child.x + cardWidth / 2;
+      const middleY = sourceY + Math.max(28, (child.y - sourceY) / 2);
+      addPath(fragment, "M " + sourceX + " " + sourceY + " V " + middleY + " H " + targetX + " V " + child.y, parentLineClass([relationship]));
+    });
+  }
+
+  function createTreeNode(node, person, cardWidth, cardHeight) {
+    const group = svgElement("g", {
+      class: "tree-node" + (person.id === state.settings.focusPersonId ? " is-focus" : ""),
+      transform: "translate(" + node.x + " " + node.y + ")", tabindex: "0", role: "button",
+      "aria-label": fullName(person) + "の詳細を開く", "data-person-id": person.id
+    });
+    group.appendChild(svgElement("title", {})).textContent = fullName(person) + "、" + lifeYears(person);
+    group.appendChild(svgElement("rect", { class: "tree-node-card", width: cardWidth, height: cardHeight, rx: 18, ry: 18 }));
+    const photoX = cardWidth / 2;
+    const photoY = 32;
+    group.appendChild(svgElement("circle", { class: "tree-node-photo-bg", cx: photoX, cy: photoY, r: 22 }));
+    if (person.photo) {
+      const clipId = "photo-" + person.id.replace(/[^a-zA-Z0-9_-]/g, "");
+      const clipPath = svgElement("clipPath", { id: clipId });
+      clipPath.appendChild(svgElement("circle", { cx: photoX, cy: photoY, r: 22 }));
+      group.appendChild(clipPath);
+      const image = svgElement("image", { x: photoX - 22, y: photoY - 22, width: 44, height: 44, preserveAspectRatio: "xMidYMid slice", "clip-path": "url(#" + clipId + ")" });
+      image.setAttribute("href", person.photo);
+      group.appendChild(image);
+    } else {
+      const initial = svgElement("text", { class: "tree-node-initial", x: photoX, y: photoY });
+      initial.textContent = initialOf(person);
+      group.appendChild(initial);
+    }
+    const name = svgElement("text", { class: "tree-node-name", x: cardWidth / 2, y: 68 });
+    name.textContent = compactText(fullName(person), 14);
+    group.appendChild(name);
+    if (person.formerFamilyName) {
+      const former = svgElement("text", { class: "tree-node-former", x: cardWidth / 2, y: 89 });
+      former.textContent = "旧姓 " + compactText(person.formerFamilyName, 9);
+      group.appendChild(former);
+    }
+    const years = svgElement("text", { class: "tree-node-years", x: cardWidth / 2, y: person.formerFamilyName ? 111 : 99 });
+    years.textContent = lifeYears(person);
+    group.appendChild(years);
+    if (person.isDeceased) {
+      group.appendChild(svgElement("rect", { class: "tree-node-deceased", x: cardWidth - 41, y: 9, width: 31, height: 18, rx: 8 }));
+      const label = svgElement("text", { class: "tree-node-deceased-text", x: cardWidth - 25.5, y: 21.5 });
+      label.textContent = "故人";
+      group.appendChild(label);
+    }
+    if (person.id === state.settings.focusPersonId) {
+      group.appendChild(svgElement("rect", { class: "tree-node-focus-badge", x: 9, y: 8, width: 35, height: 19, rx: 9 }));
+      const focus = svgElement("text", { class: "tree-node-focus-text", x: 26.5, y: 21 });
+      focus.textContent = "基準";
+      group.appendChild(focus);
+    }
+    return group;
+  }
+
+  function traverseRelations(startId, direction) {
+    const ids = new Set(startId ? [startId] : []);
+    const queue = startId ? [startId] : [];
+    while (queue.length) {
+      const current = queue.shift();
+      state.relationships.forEach(function (relationship) {
+        if (relationship.type !== "parent-child") return;
+        let next = "";
+        if (direction !== "down" && relationship.toPersonId === current) next = relationship.fromPersonId;
+        if (direction !== "up" && relationship.fromPersonId === current) next = relationship.toPersonId;
+        if (next && !ids.has(next)) { ids.add(next); queue.push(next); }
+      });
+    }
+    return ids;
+  }
+
+  function addPartnersToSet(ids) {
+    const result = new Set(ids);
+    state.relationships.forEach(function (relationship) {
+      if (relationship.type !== "partner") return;
+      if (ids.has(relationship.fromPersonId)) result.add(relationship.toPersonId);
+      if (ids.has(relationship.toPersonId)) result.add(relationship.fromPersonId);
+    });
+    return result;
+  }
+
+  function breadthFirstIds(startId, includePartners, maxDepth, parentOnly) {
+    const distance = new Map();
+    if (!startId) return distance;
+    distance.set(startId, 0);
+    const queue = [startId];
+    while (queue.length) {
+      const current = queue.shift();
+      const currentDistance = distance.get(current);
+      if (currentDistance >= maxDepth) continue;
+      state.relationships.forEach(function (relationship) {
+        if (parentOnly && relationship.type !== "parent-child") return;
+        if (!includePartners && relationship.type === "partner") return;
+        let next = "";
+        if (relationship.fromPersonId === current) next = relationship.toPersonId;
+        else if (relationship.toPersonId === current) next = relationship.fromPersonId;
+        if (next && !distance.has(next)) { distance.set(next, currentDistance + 1); queue.push(next); }
+      });
+    }
+    return distance;
+  }
+
+  function getTreeViewData(forceAll) {
+    const focusId = state.settings.focusPersonId && findPerson(state.settings.focusPersonId) ? state.settings.focusPersonId : (state.persons[0] && state.persons[0].id);
+    const mode = forceAll ? "all" : state.settings.treeViewMode;
+    let ids;
+    if (mode === "all" || !focusId) ids = new Set(state.persons.map(function (person) { return person.id; }));
+    else if (mode === "ancestors") ids = traverseRelations(focusId, "up");
+    else if (mode === "descendants") ids = traverseRelations(focusId, "down");
+    else if (mode === "direct" || mode === "lineage") {
+      const ancestors = traverseRelations(focusId, "up");
+      const descendants = traverseRelations(focusId, "down");
+      ids = new Set(Array.from(ancestors).concat(Array.from(descendants)));
+    } else if (mode === "blood") ids = new Set(breadthFirstIds(focusId, false, Number.MAX_SAFE_INTEGER, true).keys());
+    else {
+      const depth = state.settings.kinshipDepth === "unlimited" ? Number.MAX_SAFE_INTEGER : Number(state.settings.kinshipDepth || 1);
+      ids = new Set(breadthFirstIds(focusId, state.settings.includePartners, depth, false).keys());
+    }
+    if (!forceAll && state.settings.includePartners && mode !== "all" && mode !== "kinship" && mode !== "direct") ids = addPartnersToSet(ids);
+    const persons = state.persons.filter(function (person) { return ids.has(person.id); });
+    const relationships = state.relationships.filter(function (relationship) { return ids.has(relationship.fromPersonId) && ids.has(relationship.toPersonId); });
+    return { persons: persons, relationships: relationships };
+  }
+
+  function generationLabel(relative) {
+    if (relative === -2) return "祖父母世代（2世代上）";
+    if (relative === -1) return "親世代（1世代上）";
+    if (relative === 0) return "基準人物と同世代";
+    if (relative === 1) return "子世代（1世代下）";
+    if (relative === 2) return "孫世代（2世代下）";
+    return Math.abs(relative) + "世代" + (relative < 0 ? "上" : "下");
+  }
+
+  function appendGenerationLabels(fragment, layout) {
+    if (!layout || !layout.nodes.length) return;
+    const focus = layout.nodes.find(function (node) { return node.id === state.settings.focusPersonId; });
+    const focusGeneration = focus ? focus.generation : layout.nodes[0].generation;
+    const generations = new Map();
+    layout.nodes.forEach(function (node) {
+      if (node.disconnected) return;
+      if (!generations.has(node.generation)) generations.set(node.generation, node.y);
+      else generations.set(node.generation, Math.min(generations.get(node.generation), node.y));
+    });
+    Array.from(generations.keys()).sort(function (a, b) { return a - b; }).forEach(function (generation) {
+      const label = svgElement("text", { class: "tree-generation-label", x: layout.bounds.x + 14, y: generations.get(generation) - 17 });
+      label.textContent = generationLabel(generation - focusGeneration);
+      fragment.appendChild(label);
+    });
+  }
+
+  function createTreeScene(persons, relationships, showGenerationLabels) {
+    const layout = Layout.compute(persons, relationships, state.settings.focusPersonId);
+    const nodeMap = new Map(layout.nodes.map(function (node) { return [node.id, node]; }));
+    const personMap = new Map(persons.map(function (person) { return [person.id, person]; }));
+    const fragment = document.createDocumentFragment();
+    renderConnections(fragment, nodeMap, layout.cardWidth, layout.cardHeight, relationships);
+    if (showGenerationLabels) appendGenerationLabels(fragment, layout);
+    if (layout.disconnectedStartY) {
+      const y = layout.disconnectedStartY;
+      addPath(fragment, "M " + (layout.bounds.x + 25) + " " + y + " H " + (layout.bounds.x + layout.bounds.width - 25), "tree-link tree-disconnected-divider");
+      const label = svgElement("text", { class: "tree-disconnected-label", x: layout.bounds.x + 32, y: y - 10 });
+      label.textContent = "ほかの家族・未接続の人物";
+      fragment.appendChild(label);
+    }
+    layout.nodes.forEach(function (node) { const person = personMap.get(node.id); if (person) fragment.appendChild(createTreeNode(node, person, layout.cardWidth, layout.cardHeight)); });
+    return { layout: layout, fragment: fragment };
+  }
+
+  function viewModeLabel() {
+    return { all: "全員", direct: "直系のみ", ancestors: "祖先のみ", descendants: "子孫のみ", lineage: "祖先と子孫", blood: "血縁者中心", kinship: (state.settings.kinshipDepth === "unlimited" ? "親等制限なし" : state.settings.kinshipDepth + "親等以内") }[state.settings.treeViewMode] || "全員";
+  }
+
+  function renderTree() {
+    elements.treeLoading.hidden = true;
+    elements.treeError.hidden = true;
+    elements.treeViewport.replaceChildren();
+    const view = getTreeViewData(false);
+    state.visiblePersons = view.persons;
+    state.visibleRelationships = view.relationships;
+    elements.viewSummary.textContent = viewModeLabel() + "・" + view.persons.length + "人";
+    if (!view.persons.length) { state.layout = null; elements.treeEmpty.hidden = false; return; }
+    elements.treeEmpty.hidden = true;
+    const scene = createTreeScene(view.persons, view.relationships, state.settings.showGenerationLabels);
+    state.layout = scene.layout;
+    elements.treeViewport.appendChild(scene.fragment);
+    applyTransform();
+  }
+
+  function applyTransform() {
+    elements.treeViewport.setAttribute("transform", "translate(" + state.transform.x + " " + state.transform.y + ") scale(" + state.transform.scale + ")");
+  }
+
+  function centerTree() {
+    if (!state.layout || !state.layout.bounds.width) return;
+    const rect = elements.treeStage.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const bounds = state.layout.bounds;
+    const fitScale = Math.min(rect.width / bounds.width, (rect.height - 60) / bounds.height) * 0.91;
+    const readableScale = rect.width < 600 ? 0.76 : 0.66;
+    const scale = Math.max(0.25, Math.min(1.18, Math.max(fitScale, readableScale)));
+    const focusNode = state.layout.nodes.find(function (node) { return node.id === state.settings.focusPersonId; });
+    const centerX = focusNode ? focusNode.x + state.layout.cardWidth / 2 : bounds.x + bounds.width / 2;
+    const centerY = focusNode ? focusNode.y + state.layout.cardHeight / 2 : bounds.y + bounds.height / 2;
+    state.transform.scale = scale;
+    state.transform.x = rect.width / 2 - centerX * scale;
+    state.transform.y = rect.height / 2 - centerY * scale - 10;
+    applyTransform();
+    scheduleScaleSave();
+  }
+
+  function revealPerson(personId) {
+    if (!state.layout) return;
+    const node = state.layout.nodes.find(function (item) { return item.id === personId; });
+    if (!node) return;
+    const rect = elements.treeStage.getBoundingClientRect();
+    const scale = state.transform.scale;
+    state.transform.x = rect.width / 2 - (node.x + state.layout.cardWidth / 2) * scale;
+    state.transform.y = rect.height / 2 - (node.y + state.layout.cardHeight / 2) * scale;
+    applyTransform();
+  }
+
+  function scheduleScaleSave() {
+    clearTimeout(state.saveScaleTimer);
+    state.saveScaleTimer = setTimeout(function () {
+      if (!state.settings) return;
+      state.settings.scale = state.transform.scale;
+      DB.saveSettings({ scale: state.transform.scale }).catch(function () { showToast("表示倍率を保存できませんでした。", true); });
+    }, 500);
+  }
+
+  function zoomAt(nextScale, clientX, clientY) {
+    const rect = elements.treeSvg.getBoundingClientRect();
+    const x = clientX === undefined ? rect.width / 2 : clientX - rect.left;
+    const y = clientY === undefined ? rect.height / 2 : clientY - rect.top;
+    const oldScale = state.transform.scale;
+    const scale = Math.max(0.25, Math.min(2.5, nextScale));
+    state.transform.x = x - (x - state.transform.x) * (scale / oldScale);
+    state.transform.y = y - (y - state.transform.y) * (scale / oldScale);
+    state.transform.scale = scale;
+    applyTransform();
+    scheduleScaleSave();
+  }
+
+  function openDetail(personId) {
+    if (!findPerson(personId)) return;
+    state.selectedPersonId = personId;
+    renderDetail();
+    elements.detailPanel.classList.add("is-open");
+    elements.detailPanel.setAttribute("aria-hidden", "false");
+    if (matchMedia("(max-width: 840px)").matches) elements.detailBackdrop.hidden = false;
+  }
+
+  function closeDetail() {
+    state.selectedPersonId = "";
+    elements.detailPanel.classList.remove("is-open");
+    elements.detailPanel.setAttribute("aria-hidden", "true");
+    elements.detailBackdrop.hidden = true;
+  }
+
+  function compareRelativeItems(a, b) {
+    const orderA = Number.isFinite(Number(a.relationship.sortOrder)) ? Number(a.relationship.sortOrder) : Number.MAX_SAFE_INTEGER;
+    const orderB = Number.isFinite(Number(b.relationship.sortOrder)) ? Number(b.relationship.sortOrder) : Number.MAX_SAFE_INTEGER;
+    return orderA - orderB || Layout.comparePeople(a.person, b.person);
+  }
+
+  function getRelativeGroups(personId) {
+    const groups = { parents: [], partners: [], children: [] };
+    state.relationships.forEach(function (relationship) {
+      if (relationship.type === "parent-child" && relationship.toPersonId === personId) {
+        const person = findPerson(relationship.fromPersonId);
+        if (person) groups.parents.push({ person: person, relationship: relationship });
+      } else if (relationship.type === "parent-child" && relationship.fromPersonId === personId) {
+        const person = findPerson(relationship.toPersonId);
+        if (person) groups.children.push({ person: person, relationship: relationship });
+      } else if (relationship.type === "partner" && (relationship.fromPersonId === personId || relationship.toPersonId === personId)) {
+        const relativeId = relationship.fromPersonId === personId ? relationship.toPersonId : relationship.fromPersonId;
+        const person = findPerson(relativeId);
+        if (person) groups.partners.push({ person: person, relationship: relationship });
+      }
+    });
+    groups.parents.sort(function (a, b) { return Layout.comparePeople(a.person, b.person); });
+    groups.partners.sort(compareRelativeItems);
+    groups.children.sort(compareRelativeItems);
+    return groups;
+  }
+
+  function relationSummary(item, group) {
+    if (group === "partners") {
+      let text = relationLabel(item.relationship.relationshipType) + "・" + statusLabel(item.relationship.status, item.relationship.relationshipType);
+      if (item.relationship.startDate || item.relationship.endDate) {
+        text += "（" + (yearFromDate(item.relationship.startDate) || "?") + "〜" + (yearFromDate(item.relationship.endDate) || "") + "）";
+      }
+      return text;
+    }
+    return childRelationLabel(item.relationship.relationshipType);
+  }
+
+  function relativeRows(items, group) {
+    if (!items.length) return "<p class=\"empty-relative\">登録されていません</p>";
+    return "<div class=\"relative-list\">" + items.map(function (item) {
+      return "<div class=\"relative-row\">" +
+        "<button class=\"relative-person\" type=\"button\" data-open-person=\"" + escapeHtml(item.person.id) + "\">" +
+        avatarHtml(item.person) + "<span><strong>" + escapeHtml(fullName(item.person)) + "</strong><small>" + escapeHtml(relationSummary(item, group)) + "</small></span></button>" +
+        "<button class=\"relative-menu-button\" type=\"button\" data-relationship-menu=\"" + escapeHtml(item.relationship.id) + "\" data-relative-id=\"" + escapeHtml(item.person.id) + "\" data-group=\"" + group + "\" aria-label=\"" + escapeHtml(fullName(item.person)) + "との関係メニュー\">⋮</button></div>";
+    }).join("") + "</div>" + ((group === "children" || group === "partners") && items.length > 1 ? "<p class=\"relation-order-note\">メニューから表示順を変更できます。</p>" : "");
+  }
+
+  function renderDetail() {
+    const person = findPerson(state.selectedPersonId);
+    if (!person) return;
+    const groups = getRelativeGroups(person.id);
+    const formerName = person.formerFamilyName ? "旧姓：" + person.formerFamilyName : "";
+    const nameExtras = [person.nickname ? "通称：" + person.nickname : "", person.otherNames ? "別名：" + person.otherNames : "", person.honorific ? "敬称・補足：" + person.honorific : "", person.nameMemo ? "名前の補足：" + person.nameMemo : ""].filter(Boolean);
+    const focusChip = person.id === state.settings.focusPersonId ? "<span class=\"focus-chip\">基準人物</span>" : "";
+    elements.detailContent.innerHTML =
+      "<div class=\"detail-inner\"><div class=\"detail-topbar\"><button class=\"text-button\" type=\"button\" data-set-focus>基準人物にする</button><button class=\"icon-button\" type=\"button\" data-close-detail aria-label=\"詳細を閉じる\">×</button></div>" +
+      "<section class=\"detail-hero\">" + avatarHtml(person, "detail-photo") + "<h2>" + escapeHtml(fullName(person)) + "</h2>" +
+      (formerName ? "<p class=\"former-name\">" + escapeHtml(formerName) + "</p>" : "") +
+      (person.nickname ? "<p class=\"nickname\">「" + escapeHtml(person.nickname) + "」</p>" : "") +
+      (person.isDeceased ? "<span class=\"deceased-chip\">故人</span>" : "") + focusChip + "</section>" +
+      "<div class=\"detail-actions\"><button class=\"primary-button add-relative-primary\" type=\"button\" data-add-relative>親族を追加</button><button class=\"secondary-button\" type=\"button\" data-edit-person>人物を編集</button><button class=\"secondary-button\" type=\"button\" data-add-relation>既存人物と関係を追加</button></div>" +
+      "<section class=\"detail-section\"><h3>基本情報</h3><dl class=\"detail-list\">" +
+      "<div><dt>生年月日</dt><dd>" + escapeHtml(formatPersonDate(person, "birth", "生年不明")) + "</dd></div>" +
+      (person.isDeceased || person.deathDate ? "<div><dt>没年月日</dt><dd>" + escapeHtml(formatPersonDate(person, "death", "没年不明")) + "</dd></div>" : "") +
+      (nameExtras.length ? "<div><dt>別名など</dt><dd>" + escapeHtml(nameExtras.join("\n")) + "</dd></div>" : "") +
+      "<div><dt>出身地</dt><dd>" + escapeHtml(person.birthplace || "未登録") + "</dd></div><div><dt>メモ</dt><dd>" + escapeHtml(person.memo || "未登録") + "</dd></div></dl></section>" +
+      "<section class=\"detail-section\"><h3>親</h3>" + relativeRows(groups.parents, "parents") + "</section>" +
+      "<section class=\"detail-section\"><h3>配偶者・パートナー</h3>" + relativeRows(groups.partners, "partners") + "</section>" +
+      "<section class=\"detail-section\"><h3>子ども</h3>" + relativeRows(groups.children, "children") + "</section>" +
+      "<section class=\"detail-section\"><button class=\"danger-button delete-person\" type=\"button\" data-delete-person>この人物を削除</button></section></div>";
+  }
+
+  function openPersonDialog(person, options) {
+    elements.personForm.reset();
+    elements.personFormError.hidden = true;
+    elements.personDialogTitle.textContent = options && options.title ? options.title : (person ? "人物を編集" : "人物を追加");
+    elements.personId.value = person ? person.id : "";
+    elements.familyName.value = person ? person.familyName : "";
+    elements.givenName.value = person ? person.givenName : "";
+    elements.formerFamilyName.value = person ? person.formerFamilyName : "";
+    elements.familyNameKana.value = person ? person.familyNameKana : "";
+    elements.givenNameKana.value = person ? person.givenNameKana : "";
+    elements.nickname.value = person ? person.nickname : "";
+    elements.otherNames.value = person ? person.otherNames : "";
+    elements.honorific.value = person ? person.honorific : "";
+    elements.nameMemo.value = person ? person.nameMemo : "";
+    elements.gender.value = person ? person.gender : ((options && options.suggestedGender) || "");
+    elements.isDeceased.checked = Boolean(person && person.isDeceased);
+    fillDateEditor("birth", person);
+    fillDateEditor("death", person);
+    elements.birthplace.value = person ? person.birthplace : "";
+    elements.memo.value = person ? person.memo : "";
+    state.photoValue = person ? person.photo : "";
+    state.photoInfo = null;
+    elements.photoCompressionNotice.textContent = "写真は長辺1200px以内へ調整して端末内に保存します。";
+    updatePhotoPreview();
+    updateDeathDateState();
+    elements.personDialog.showModal();
+    setTimeout(function () { (person ? elements.familyName : elements.givenName).focus(); }, 30);
+  }
+
+  function populateDateSelects() {
+    ["birth", "death"].forEach(function (kind) {
+      const month = elements[kind + "DateMonth"];
+      const day = elements[kind + "DateDay"];
+      if (!month.options.length) month.innerHTML = "<option value=\"\">月</option>" + Array.from({ length: 12 }, function (_, index) { return "<option value=\"" + (index + 1) + "\">" + (index + 1) + "月</option>"; }).join("");
+      if (!day.options.length) day.innerHTML = "<option value=\"\">日</option>" + Array.from({ length: 31 }, function (_, index) { return "<option value=\"" + (index + 1) + "\">" + (index + 1) + "日</option>"; }).join("");
+    });
+  }
+
+  function fillDateEditor(kind, person) {
+    const value = person ? (person[kind + "Date"] || "") : "";
+    const precision = person ? personDatePrecision(person, kind) : "unknown";
+    const parts = value.split("-");
+    elements[kind + "DatePrecision"].value = precision;
+    elements[kind + "DateYear"].value = parts[0] || "";
+    elements[kind + "DateMonth"].value = parts[1] ? String(Number(parts[1])) : "";
+    elements[kind + "DateDay"].value = parts[2] ? String(Number(parts[2])) : "";
+    elements[kind + "DateApproximate"].checked = Boolean(person && person[kind + "DateApproximate"]);
+    updateDateEditor(kind);
+  }
+
+  function readDateEditor(kind) {
+    const precision = elements[kind + "DatePrecision"].value;
+    if (precision === "unknown") return { value: "", precision: "unknown", approximate: false };
+    const year = String(elements[kind + "DateYear"].value || "").padStart(4, "0");
+    if (!/^\d{4}$/.test(year) || Number(year) < 1) throw new Error((kind === "birth" ? "生年" : "没年") + "を入力してください。");
+    let value = year;
+    if (precision === "month" || precision === "day") {
+      const month = Number(elements[kind + "DateMonth"].value);
+      if (month < 1 || month > 12) throw new Error((kind === "birth" ? "生年月" : "没年月") + "の月を選んでください。");
+      value += "-" + String(month).padStart(2, "0");
+    }
+    if (precision === "day") {
+      const day = Number(elements[kind + "DateDay"].value);
+      if (day < 1 || day > 31) throw new Error((kind === "birth" ? "生年月日" : "没年月日") + "の日を選んでください。");
+      value += "-" + String(day).padStart(2, "0");
+    }
+    return { value: value, precision: precision, approximate: elements[kind + "DateApproximate"].checked };
+  }
+
+  function updateDateEditor(kind) {
+    const precision = elements[kind + "DatePrecision"].value;
+    const unknown = precision === "unknown";
+    elements[kind + "YearField"].hidden = unknown;
+    elements[kind + "MonthField"].hidden = precision !== "month" && precision !== "day";
+    elements[kind + "DayField"].hidden = precision !== "day";
+    elements[kind + "ApproximateField"].hidden = unknown;
+    let preview;
+    try {
+      const data = readDateEditor(kind);
+      const temp = {}; temp[kind + "Date"] = data.value; temp[kind + "DatePrecision"] = data.precision; temp[kind + "DateApproximate"] = data.approximate;
+      preview = formatPersonDate(temp, kind, kind === "birth" ? "生年不明" : "没年不明");
+    } catch (error) { preview = kind === "birth" ? "生年を入力" : "没年を入力"; }
+    elements[kind + "DatePreview"].textContent = preview;
+  }
+
+  function updatePhotoPreview() {
+    if (state.photoValue) {
+      elements.photoPreview.innerHTML = "<img src=\"" + escapeHtml(state.photoValue) + "\" alt=\"選択した写真\">";
+      elements.removePhotoButton.hidden = false;
+    } else {
+      elements.photoPreview.textContent = elements.givenName.value.trim().slice(0, 1) || "写";
+      elements.removePhotoButton.hidden = true;
+    }
+  }
+
+  function updateDeathDateState() {
+    const enabled = elements.isDeceased.checked;
+    elements.deathDateLabel.querySelectorAll("input, select").forEach(function (control) { control.disabled = !enabled; });
+    elements.deathDateLabel.style.opacity = enabled ? "1" : ".55";
+  }
+
+  async function readPhoto(file) {
+    if (!file || !file.type.startsWith("image/")) throw new Error("画像ファイルを選んでください。");
+    if (file.size > 30 * 1024 * 1024) throw new Error("写真は30MB以下のものを選んでください。");
+    let drawable;
+    let objectUrl = "";
+    try {
+      if (typeof createImageBitmap === "function") {
+        try { drawable = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+        catch (error) { drawable = await createImageBitmap(file); }
+      } else {
+        objectUrl = URL.createObjectURL(file);
+        drawable = await new Promise(function (resolve, reject) {
+          const image = new Image();
+          image.onload = function () { resolve(image); };
+          image.onerror = function () { reject(new Error("写真の形式を読み込めませんでした。")); };
+          image.src = objectUrl;
+        });
+      }
+      const sourceWidth = drawable.width || drawable.naturalWidth;
+      const sourceHeight = drawable.height || drawable.naturalHeight;
+      if (!sourceWidth || !sourceHeight) throw new Error("写真の大きさを確認できませんでした。");
+      const limit = 1200;
+      const ratio = Math.min(1, limit / Math.max(sourceWidth, sourceHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(sourceWidth * ratio));
+      canvas.height = Math.max(1, Math.round(sourceHeight * ratio));
+      const context = canvas.getContext("2d", { alpha: true });
+      if (!context) throw new Error("写真を圧縮できないブラウザです。");
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = "high";
+      context.drawImage(drawable, 0, 0, canvas.width, canvas.height);
+      const useWebp = file.type === "image/png" || file.type === "image/webp";
+      const dataUrl = canvas.toDataURL(useWebp ? "image/webp" : "image/jpeg", useWebp ? 0.88 : 0.86);
+      const estimatedBytes = Math.round((dataUrl.length - dataUrl.indexOf(",") - 1) * 0.75);
+      return {
+        dataUrl: dataUrl,
+        originalBytes: file.size,
+        compressedBytes: estimatedBytes,
+        width: canvas.width,
+        height: canvas.height,
+        compressed: ratio < 1 || estimatedBytes < file.size * 0.92
+      };
+    } catch (error) {
+      throw new Error("写真を縮小・圧縮できませんでした。別の画像を選ぶか、画像形式を確認してください。");
+    } finally {
+      if (drawable && typeof drawable.close === "function") drawable.close();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  function typeOptions(kind, select) {
+    const options = kind === "partner"
+      ? [["marriage", "婚姻"], ["partnership", "パートナー"]]
+      : [["biological", "実親子"], ["adoptive", "養親子"], ["step", "継親子"]];
+    select.innerHTML = options.map(function (option) { return "<option value=\"" + option[0] + "\">" + option[1] + "</option>"; }).join("");
+  }
+
+  function updateRelationshipKind() {
+    const kind = elements.relationKind.value;
+    typeOptions(kind, elements.relationType);
+    elements.parentDirectionField.hidden = kind === "partner";
+    elements.relationStatusLabel.hidden = kind !== "partner";
+  }
+
+  function openRelationshipDialog(baseId, relationship) {
+    const base = findPerson(baseId);
+    if (!base) return;
+    if (!relationship && state.persons.length < 2) {
+      showToast("関係を登録するには、人物をもう1人追加してください。", true);
+      return;
+    }
+    elements.relationshipForm.reset();
+    elements.relationshipFormError.hidden = true;
+    elements.relationshipDialogTitle.textContent = relationship ? "関係を編集" : "関係を追加";
+    elements.relationshipId.value = relationship ? relationship.id : "";
+    elements.relationshipBaseId.value = base.id;
+    let targetId = "";
+    if (relationship) targetId = relationship.fromPersonId === base.id ? relationship.toPersonId : relationship.fromPersonId;
+    const candidates = relationship ? state.persons.filter(function (person) { return person.id === targetId; }) : state.persons.filter(function (person) { return person.id !== base.id; });
+    elements.relationTarget.innerHTML = candidates.map(function (person) { return "<option value=\"" + escapeHtml(person.id) + "\">" + escapeHtml(fullName(person)) + "</option>"; }).join("");
+    elements.relationTarget.value = targetId || (candidates[0] && candidates[0].id) || "";
+    elements.relationKind.value = relationship ? relationship.type : "parent-child";
+    elements.relationKind.disabled = Boolean(relationship);
+    elements.relationTarget.disabled = Boolean(relationship);
+    elements.baseParentLabel.textContent = fullName(base) + "が相手の親";
+    elements.baseChildLabel.textContent = fullName(base) + "が相手の子";
+    updateRelationshipKind();
+    if (relationship) {
+      elements.relationType.value = relationship.relationshipType;
+      elements.relationStatus.value = relationship.status || "current";
+      elements.relationStartDate.value = relationship.startDate || "";
+      elements.relationEndDate.value = relationship.endDate || "";
+      elements.relationMemo.value = relationship.memo || "";
+      if (relationship.type === "parent-child") {
+        const direction = relationship.fromPersonId === base.id ? "base-parent" : "base-child";
+        elements.relationshipForm.querySelector("input[name=parentDirection][value=" + direction + "]").checked = true;
+      }
+    }
+    elements.relationshipDialog.showModal();
+  }
+
+  function relativeRoleInfo() {
+    const value = elements.relativeRole.value;
+    if (value === "partner") return { role: "partner", kind: "partner", label: "配偶者・パートナー", suggestedGender: "" };
+    if (value === "child") return { role: "child", kind: "parent-child", label: "子ども", suggestedGender: "" };
+    if (value === "parent-mother") return { role: "parent", kind: "parent-child", label: "母または親", suggestedGender: "female" };
+    return { role: "parent", kind: "parent-child", label: "父または親", suggestedGender: "male" };
+  }
+
+  function updateRelativeRole() {
+    const info = relativeRoleInfo();
+    typeOptions(info.kind, elements.quickRelationType);
+    elements.quickStatusLabel.hidden = info.kind !== "partner";
+  }
+
+  function setRelativeSource(source) {
+    state.relativeSource = source;
+    document.querySelectorAll("[data-relative-source]").forEach(function (button) {
+      button.classList.toggle("is-active", button.dataset.relativeSource === source);
+    });
+    elements.relativeNewPanel.hidden = source !== "new";
+    elements.relativeExistingPanel.hidden = source !== "existing";
+    elements.relativeContinueButton.textContent = source === "new" ? "人物情報を入力" : "この人物との関係を保存";
+    if (source === "existing") renderRelativePersonResults();
+  }
+
+  function renderRelativePersonResults() {
+    const baseId = elements.relativeBaseId.value;
+    const query = elements.relativePersonSearch.value.trim().toLocaleLowerCase("ja").replace(/\s+/g, "");
+    const people = state.persons.filter(function (person) {
+      if (person.id === baseId) return false;
+      if (!query) return true;
+      return matchesPersonSearch(person, query);
+    }).slice(0, 40);
+    elements.relativePersonResults.innerHTML = people.length ? people.map(function (person) {
+      const selected = person.id === state.selectedExistingRelativeId;
+      return "<button class=\"person-pick\" type=\"button\" data-existing-relative=\"" + escapeHtml(person.id) + "\" aria-selected=\"" + selected + "\">" + avatarHtml(person) + "<span><strong>" + escapeHtml(fullName(person)) + "</strong><small>" + escapeHtml(lifeYears(person)) + "</small></span></button>";
+    }).join("") : "<p class=\"search-empty\">該当する人物はいません</p>";
+  }
+
+  function openRelativeDialog(baseId) {
+    if (!findPerson(baseId)) return;
+    elements.relativeForm.reset();
+    elements.relativeBaseId.value = baseId;
+    elements.relativeFormError.hidden = true;
+    elements.relativePersonSearch.value = "";
+    state.selectedExistingRelativeId = "";
+    updateRelativeRole();
+    setRelativeSource("new");
+    elements.relativeDialog.showModal();
+  }
+
+  function quickRelationSpec() {
+    const info = relativeRoleInfo();
+    return {
+      role: info.role,
+      type: info.kind,
+      relationshipType: elements.quickRelationType.value,
+      status: info.kind === "partner" ? elements.quickStatus.value : "",
+      startDate: elements.quickStartDate.value,
+      endDate: elements.quickEndDate.value,
+      memo: elements.quickMemo.value,
+      sortOrder: null
+    };
+  }
+
+  function relationshipFromRelative(baseId, targetId, spec) {
+    let fromPersonId = baseId;
+    let toPersonId = targetId;
+    if (spec.role === "parent") { fromPersonId = targetId; toPersonId = baseId; }
+    return Object.assign({}, spec, { fromPersonId: fromPersonId, toPersonId: toPersonId });
+  }
+
+  function renderFocusList() {
+    elements.focusPersonList.innerHTML = state.persons.slice().sort(Layout.comparePeople).map(function (person) {
+      return "<button class=\"person-pick" + (person.id === state.settings.focusPersonId ? " is-current" : "") + "\" type=\"button\" data-focus-person=\"" + escapeHtml(person.id) + "\">" + avatarHtml(person) + "<span><strong>" + escapeHtml(fullName(person)) + "</strong><small>" + escapeHtml(lifeYears(person)) + "</small></span></button>";
+    }).join("") || "<p class=\"search-empty\">人物が登録されていません。</p>";
+  }
+
+  function renderSearchResults() {
+    const query = elements.personSearch.value.trim();
+    if (!query) { elements.searchResults.hidden = true; elements.searchResults.replaceChildren(); return; }
+    const results = state.persons.filter(function (person) {
+      return matchesPersonSearch(person, query);
+    }).slice(0, 12);
+    elements.searchResults.innerHTML = results.length ? results.map(function (person) {
+      return "<button class=\"search-result\" type=\"button\" role=\"option\" data-search-person=\"" + escapeHtml(person.id) + "\">" + avatarHtml(person) + "<span><strong>" + escapeHtml(fullName(person)) + "</strong><small>" + escapeHtml(lifeYears(person)) + "</small></span></button>";
+    }).join("") : "<p class=\"search-empty\">該当する人物はいません</p>";
+    elements.searchResults.hidden = false;
+  }
+
+  function relationshipCount(personId) {
+    return state.relationships.filter(function (item) { return item.fromPersonId === personId || item.toPersonId === personId; }).length;
+  }
+
+  function informationIssues(person) {
+    const issues = [];
+    const relations = state.relationships.filter(function (item) { return item.fromPersonId === person.id || item.toPersonId === person.id; });
+    const parents = state.relationships.filter(function (item) { return item.type === "parent-child" && item.toPersonId === person.id; });
+    if (!person.familyName || !person.givenName) issues.push("氏名が不完全");
+    if (!person.birthDate || personDatePrecision(person, "birth") === "unknown") issues.push("生年月日・生年が不明");
+    if (!parents.length) issues.push("親が未登録");
+    if (!person.photo) issues.push("写真がない");
+    if (!person.familyNameKana || !person.givenNameKana) issues.push("よみがながない");
+    if (!relations.length) issues.push("親族関係がない");
+    if (person.isDeceased && !person.deathDate) issues.push("故人だが没年月日・没年がない");
+    if (!person.isDeceased && person.deathDate) issues.push("没年月日があるが故人ではない");
+    const birthBounds = DB.dateBounds(person.birthDate, personDatePrecision(person, "birth"));
+    const deathBounds = DB.dateBounds(person.deathDate, personDatePrecision(person, "death"));
+    if (birthBounds && deathBounds && deathBounds.end < birthBounds.start) issues.push("没年月日が生年月日より前");
+    const today = new Date().toISOString().slice(0, 10);
+    if (birthBounds && birthBounds.start > today) issues.push("生年月日が未来");
+    if (deathBounds && deathBounds.start > today) issues.push("没年月日が未来");
+    return issues;
+  }
+
+  function comparePersonList(a, b, sort) {
+    if (sort === "kana") return ((a.familyNameKana || "") + (a.givenNameKana || "") || fullName(a)).localeCompare(((b.familyNameKana || "") + (b.givenNameKana || "") || fullName(b)), "ja");
+    if (sort === "birth") return (a.birthDate || "9999").localeCompare(b.birthDate || "9999") || fullName(a).localeCompare(fullName(b), "ja");
+    if (sort === "updated") return (b.updatedAt || "").localeCompare(a.updatedAt || "") || fullName(a).localeCompare(fullName(b), "ja");
+    if (sort === "created") return (b.createdAt || "").localeCompare(a.createdAt || "") || fullName(a).localeCompare(fullName(b), "ja");
+    return fullName(a).localeCompare(fullName(b), "ja");
+  }
+
+  function personMatchesFilter(person, filter) {
+    if (filter === "living") return !person.isDeceased;
+    if (filter === "deceased") return person.isDeceased;
+    if (filter === "birth-unknown") return !person.birthDate || personDatePrecision(person, "birth") === "unknown";
+    if (filter === "no-photo") return !person.photo;
+    if (filter === "no-parent") return !state.relationships.some(function (item) { return item.type === "parent-child" && item.toPersonId === person.id; });
+    if (filter === "unrelated") return relationshipCount(person.id) === 0;
+    if (filter === "incomplete") return informationIssues(person).length > 0;
+    return true;
+  }
+
+  function renderPersonList() {
+    if (!elements.personList) return;
+    const query = elements.personSearch.value.trim();
+    const filter = elements.peopleFilter.value || "all";
+    const sort = elements.peopleSort.value || "name";
+    const people = state.persons.filter(function (person) { return matchesPersonSearch(person, query) && personMatchesFilter(person, filter); }).sort(function (a, b) { return comparePersonList(a, b, sort); });
+    elements.peopleCount.textContent = people.length + "人";
+    elements.personList.innerHTML = people.length ? people.map(function (person) {
+      const issues = informationIssues(person);
+      return "<button class=\"person-list-card\" type=\"button\" data-list-person=\"" + escapeHtml(person.id) + "\">" + avatarHtml(person, "list-avatar") +
+        "<span class=\"person-list-main\"><strong>" + escapeHtml(fullName(person)) + "</strong>" + (person.formerFamilyName ? "<small>旧姓 " + escapeHtml(person.formerFamilyName) + "</small>" : "") +
+        "<small>" + escapeHtml(lifeYears(person)) + "・関係 " + relationshipCount(person.id) + "件</small></span>" +
+        (issues.length ? "<span class=\"incomplete-chip\">要確認 " + issues.length + "</span>" : "<span class=\"complete-chip\">確認済み</span>") + "</button>";
+    }).join("") : "<div class=\"list-empty\"><strong>該当する人物はいません</strong><p>検索や絞り込みを変更してください。</p></div>";
+  }
+
+  function renderIssues() {
+    const rows = [];
+    state.persons.slice().sort(Layout.comparePeople).forEach(function (person) {
+      informationIssues(person).forEach(function (issue) { rows.push({ person: person, issue: issue }); });
+    });
+    elements.issuesContent.innerHTML = rows.length ? "<div class=\"issue-summary\">" + rows.length + "件の確認項目があります。情報不足はエラーではなく、登録を補助する案内です。</div><div class=\"issue-list\">" + rows.map(function (row) {
+      return "<button type=\"button\" data-edit-issue=\"" + escapeHtml(row.person.id) + "\">" + avatarHtml(row.person) + "<span><strong>" + escapeHtml(fullName(row.person)) + "</strong><small>" + escapeHtml(row.issue) + "</small></span><span aria-hidden=\"true\">›</span></button>";
+    }).join("") + "</div>" : "<div class=\"review-empty\"><strong>大きな情報不足は見つかりませんでした</strong><p>必要に応じて人物詳細から追加情報を記録できます。</p></div>";
+  }
+
+  function relativeNameSummary(personId, group) {
+    return getRelativeGroups(personId)[group].map(function (item) { return fullName(item.person); }).join("、") || "なし";
+  }
+
+  function renderDuplicateCandidates() {
+    const candidates = DB.detectDuplicateCandidates(state.persons, state.relationships, state.duplicateExclusions);
+    elements.duplicateContent.innerHTML = candidates.length ? candidates.map(function (candidate) {
+      const a = findPerson(candidate.personAId); const b = findPerson(candidate.personBId);
+      function side(person) {
+        return "<div class=\"duplicate-person\">" + avatarHtml(person, "duplicate-avatar") + "<strong>" + escapeHtml(fullName(person)) + "</strong><span>" + escapeHtml(formatPersonDate(person, "birth", "生年不明")) + "</span><dl><div><dt>親</dt><dd>" + escapeHtml(relativeNameSummary(person.id, "parents")) + "</dd></div><div><dt>配偶者</dt><dd>" + escapeHtml(relativeNameSummary(person.id, "partners")) + "</dd></div><div><dt>子ども</dt><dd>" + escapeHtml(relativeNameSummary(person.id, "children")) + "</dd></div></dl></div>";
+      }
+      return "<article class=\"duplicate-card\"><div class=\"duplicate-reasons\"><strong>候補になった理由</strong><span>" + escapeHtml(candidate.reasons.join("・")) + "</span></div><div class=\"duplicate-compare\">" + side(a) + "<span class=\"compare-mark\">⇄</span>" + side(b) + "</div><div class=\"duplicate-actions\"><button class=\"secondary-button\" type=\"button\" data-exclude-duplicate=\"" + escapeHtml(a.id) + "|" + escapeHtml(b.id) + "\">別人として除外</button><button class=\"primary-button\" type=\"button\" data-merge-duplicate=\"" + escapeHtml(a.id) + "|" + escapeHtml(b.id) + "\">比較して統合</button></div></article>";
+    }).join("") : "<div class=\"review-empty\"><strong>重複候補はありません</strong><p>除外した組み合わせは、人物が削除・統合されるまで再表示されません。</p></div>";
+  }
+
+  const MERGE_FIELD_SPECS = [
+    ["familyName", "姓"], ["givenName", "名"], ["formerFamilyName", "旧姓"], ["reading", "よみがな"],
+    ["nickname", "通称"], ["otherNames", "別名・幼名"], ["honorific", "敬称・続柄表記"], ["nameMemo", "名前の補足"],
+    ["gender", "性別"], ["birth", "生年月日・生年"], ["death", "故人・没年月日"], ["birthplace", "出身地"], ["photo", "写真"], ["memo", "メモ"]
+  ];
+
+  function mergeFieldValue(person, field) {
+    if (field === "reading") return ((person.familyNameKana || "") + " " + (person.givenNameKana || "")).trim();
+    if (field === "birth") return formatPersonDate(person, "birth", "未登録");
+    if (field === "death") return (person.isDeceased ? "故人・" : "存命・") + formatPersonDate(person, "death", "没年未登録");
+    if (field === "gender") return { female: "女性", male: "男性", nonbinary: "ノンバイナリー", other: "その他", undisclosed: "回答しない", "": "未設定" }[person.gender] || "未設定";
+    return person[field] || "未登録";
+  }
+
+  function renderMergeForm() {
+    if (!state.mergePair) return;
+    const a = findPerson(state.mergePair[0]); const b = findPerson(state.mergePair[1]);
+    if (!a || !b) return;
+    const selected = elements.mergeKeepChoices.querySelector("input[name=mergeKeep]:checked");
+    const keepId = selected ? selected.value : a.id;
+    const keep = keepId === a.id ? a : b;
+    const merge = keepId === a.id ? b : a;
+    elements.mergeKeepChoices.innerHTML = [a, b].map(function (person) { return "<label class=\"merge-keep-card\"><input type=\"radio\" name=\"mergeKeep\" value=\"" + escapeHtml(person.id) + "\"" + (person.id === keepId ? " checked" : "") + ">" + avatarHtml(person) + "<span><strong>" + escapeHtml(fullName(person)) + "</strong><small>この人物IDを残す</small></span></label>"; }).join("");
+    elements.mergeFields.innerHTML = "<div class=\"merge-field merge-field-heading\"><strong>項目</strong><span>残す人物</span><span>統合する人物</span></div>" + MERGE_FIELD_SPECS.map(function (spec) {
+      const field = spec[0]; const keepValue = mergeFieldValue(keep, field); const mergeValue = mergeFieldValue(merge, field);
+      const defaultChoice = keepValue === "未登録" && mergeValue !== "未登録" ? "merge" : "keep";
+      function choice(value, label, text, person) {
+        if (field === "photo") return "<label><input type=\"radio\" name=\"merge-field-" + field + "\" value=\"" + value + "\"" + (defaultChoice === value ? " checked" : "") + ">" + avatarHtml(person, "merge-photo") + "<span>" + label + "</span></label>";
+        return "<label><input type=\"radio\" name=\"merge-field-" + field + "\" value=\"" + value + "\"" + (defaultChoice === value ? " checked" : "") + "><span>" + escapeHtml(text) + "</span></label>";
+      }
+      return "<div class=\"merge-field\"><strong>" + escapeHtml(spec[1]) + "</strong>" + choice("keep", "残す", keepValue, keep) + choice("merge", "統合元", mergeValue, merge) + "</div>";
+    }).join("");
+  }
+
+  function openMergeDialog(personAId, personBId) {
+    state.mergePair = [personAId, personBId];
+    elements.mergeError.hidden = true;
+    elements.mergeKeepChoices.innerHTML = "<input type=\"radio\" name=\"mergeKeep\" value=\"" + escapeHtml(personAId) + "\" checked>";
+    renderMergeForm();
+    elements.mergeDialog.showModal();
+  }
+
+  function openRelationshipMenu(relationshipId, relativeId, group) {
+    const relationship = findRelationship(relationshipId);
+    const person = findPerson(relativeId);
+    if (!relationship || !person) return;
+    state.relationshipMenu = { relationshipId: relationshipId, relativeId: relativeId, group: group, baseId: state.selectedPersonId };
+    elements.relationshipMenuTitle.textContent = fullName(person) + "との関係";
+    const orderable = group === "children" || group === "partners";
+    const items = getRelativeGroups(state.selectedPersonId)[group] || [];
+    const index = items.findIndex(function (item) { return item.relationship.id === relationshipId; });
+    elements.moveRelationUpButton.hidden = !orderable;
+    elements.moveRelationDownButton.hidden = !orderable;
+    elements.resetRelationOrderButton.hidden = !orderable;
+    elements.moveRelationUpButton.disabled = index <= 0;
+    elements.moveRelationDownButton.disabled = index < 0 || index >= items.length - 1;
+    elements.resetRelationOrderButton.textContent = group === "children" ? "生年月日順へ戻す" : "基本の順番へ戻す";
+    elements.relationshipMenuDialog.showModal();
+  }
+
+  async function changeRelationOrder(direction) {
+    const menu = state.relationshipMenu;
+    if (!menu) return;
+    const items = getRelativeGroups(menu.baseId)[menu.group] || [];
+    const index = items.findIndex(function (item) { return item.relationship.id === menu.relationshipId; });
+    if (direction === "reset") {
+      await DB.saveRelationshipOrders(items.map(function (item) { return { id: item.relationship.id, sortOrder: null }; }));
+    } else {
+      const targetIndex = direction === "up" ? index - 1 : index + 1;
+      if (index < 0 || targetIndex < 0 || targetIndex >= items.length) return;
+      const moved = items.splice(index, 1)[0];
+      items.splice(targetIndex, 0, moved);
+      await DB.saveRelationshipOrders(items.map(function (item, itemIndex) { return { id: item.relationship.id, sortOrder: (itemIndex + 1) * 10 }; }));
+    }
+    elements.relationshipMenuDialog.close();
+    await refreshData();
+    showToast(direction === "reset" ? "基本の表示順に戻しました。" : "表示順を変更しました。");
+  }
+
+  function showTreeError(error) {
+    elements.treeLoading.hidden = true;
+    elements.treeEmpty.hidden = true;
+    elements.treeError.hidden = false;
+    elements.treeErrorMessage.textContent = readableError(error, "ページを再読み込みしてください。");
+  }
+
+  function bindDialogs() {
+    document.addEventListener("click", function (event) {
+      const closeButton = event.target.closest("[data-close-dialog]");
+      if (!closeButton) return;
+      const dialog = closeButton.closest("dialog");
+      if (dialog) dialog.close();
+    });
+    document.querySelectorAll("dialog").forEach(function (dialog) {
+      dialog.addEventListener("click", function (event) { if (event.target === dialog) dialog.close(); });
+    });
+    elements.personDialog.addEventListener("close", function () {
+      if (!state.personSaving) state.personFormContext = null;
+    });
+  }
+
+  function bindTreeGestures() {
+    elements.treeSvg.addEventListener("click", function (event) {
+      const node = event.target.closest(".tree-node");
+      if (node && Date.now() >= state.suppressClickUntil) openDetail(node.dataset.personId);
+    });
+    elements.treeSvg.addEventListener("keydown", function (event) {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const node = event.target.closest(".tree-node");
+      if (node) { event.preventDefault(); openDetail(node.dataset.personId); }
+    });
+    elements.treeSvg.addEventListener("pointerdown", function (event) {
+      elements.treeSvg.setPointerCapture(event.pointerId);
+      state.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY });
+      state.dragMoved = false;
+      if (state.pointers.size === 2) {
+        const points = Array.from(state.pointers.values());
+        state.pinch = {
+          distance: Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y),
+          scale: state.transform.scale, x: state.transform.x, y: state.transform.y,
+          centerX: (points[0].x + points[1].x) / 2, centerY: (points[0].y + points[1].y) / 2
+        };
+      }
+    });
+    elements.treeSvg.addEventListener("pointermove", function (event) {
+      if (!state.pointers.has(event.pointerId)) return;
+      const previous = state.pointers.get(event.pointerId);
+      const next = { x: event.clientX, y: event.clientY, startX: previous.startX, startY: previous.startY };
+      state.pointers.set(event.pointerId, next);
+      if (state.pointers.size >= 2 && state.pinch) {
+        const rect = elements.treeSvg.getBoundingClientRect();
+        const points = Array.from(state.pointers.values()).slice(0, 2);
+        const distance = Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y));
+        const scale = Math.max(0.25, Math.min(2.5, state.pinch.scale * distance / Math.max(1, state.pinch.distance)));
+        const startX = state.pinch.centerX - rect.left;
+        const startY = state.pinch.centerY - rect.top;
+        const currentX = (points[0].x + points[1].x) / 2 - rect.left;
+        const currentY = (points[0].y + points[1].y) / 2 - rect.top;
+        state.transform.scale = scale;
+        state.transform.x = currentX - ((startX - state.pinch.x) / state.pinch.scale) * scale;
+        state.transform.y = currentY - ((startY - state.pinch.y) / state.pinch.scale) * scale;
+        state.dragMoved = true;
+        elements.treeSvg.classList.add("is-dragging");
+        applyTransform();
+        scheduleScaleSave();
+      } else if (state.pointers.size === 1) {
+        const total = Math.hypot(event.clientX - previous.startX, event.clientY - previous.startY);
+        if (!state.dragMoved && total < 7) return;
+        state.dragMoved = true;
+        elements.treeSvg.classList.add("is-dragging");
+        state.transform.x += event.clientX - previous.x;
+        state.transform.y += event.clientY - previous.y;
+        applyTransform();
+      }
+    });
+    function finishPointer(event) {
+      state.pointers.delete(event.pointerId);
+      state.pinch = null;
+      if (state.dragMoved) state.suppressClickUntil = Date.now() + 180;
+      if (state.pointers.size === 0) elements.treeSvg.classList.remove("is-dragging");
+    }
+    elements.treeSvg.addEventListener("pointerup", finishPointer);
+    elements.treeSvg.addEventListener("pointercancel", finishPointer);
+    elements.treeSvg.addEventListener("wheel", function (event) {
+      event.preventDefault();
+      zoomAt(state.transform.scale * (event.deltaY > 0 ? 0.9 : 1.1), event.clientX, event.clientY);
+    }, { passive: false });
+  }
+
+  function switchAppView(view) {
+    state.currentView = view === "people" ? "people" : "tree";
+    elements.treeSection.hidden = state.currentView !== "tree";
+    elements.peopleSection.hidden = state.currentView !== "people";
+    document.querySelectorAll("[data-app-view]").forEach(function (button) { button.classList.toggle("is-active", button.dataset.appView === state.currentView); });
+    if (state.currentView === "people") renderPersonList();
+    else requestAnimationFrame(function () { if (state.layout) applyTransform(); });
+  }
+
+  function updateKinshipField() {
+    elements.kinshipDepth.disabled = elements.treeViewMode.value !== "kinship";
+  }
+
+  function openViewRangeDialog() {
+    elements.treeViewMode.value = state.settings.treeViewMode;
+    elements.kinshipDepth.value = state.settings.kinshipDepth;
+    elements.includePartners.checked = state.settings.includePartners;
+    elements.showGenerationLabels.checked = state.settings.showGenerationLabels;
+    updateKinshipField();
+    elements.viewRangeDialog.showModal();
+  }
+
+  async function handleViewRangeSubmit(event) {
+    event.preventDefault();
+    try {
+      state.settings = await DB.saveSettings({
+        treeViewMode: elements.treeViewMode.value,
+        kinshipDepth: elements.kinshipDepth.value,
+        includePartners: elements.includePartners.checked,
+        showGenerationLabels: elements.showGenerationLabels.checked
+      });
+      elements.viewRangeDialog.close();
+      renderTree();
+      requestAnimationFrame(centerTree);
+      showToast("家系図の表示範囲を更新しました。");
+    } catch (error) { showToast(readableError(error, "表示範囲を保存できませんでした。"), true); }
+  }
+
+  function openIssuesDialog() {
+    if (elements.settingsDialog.open) elements.settingsDialog.close();
+    renderIssues();
+    elements.issuesDialog.showModal();
+  }
+
+  function openDuplicateDialog() {
+    if (elements.settingsDialog.open) elements.settingsDialog.close();
+    renderDuplicateCandidates();
+    elements.duplicateDialog.showModal();
+  }
+
+  async function handleDuplicateAction(event) {
+    const exclude = event.target.closest("[data-exclude-duplicate]");
+    const merge = event.target.closest("[data-merge-duplicate]");
+    const target = exclude || merge;
+    if (!target) return;
+    const ids = (exclude ? exclude.dataset.excludeDuplicate : merge.dataset.mergeDuplicate).split("|");
+    if (exclude) {
+      try {
+        await DB.saveDuplicateExclusion(ids[0], ids[1]);
+        const data = await DB.readAll();
+        state.duplicateExclusions = data.duplicateExclusions;
+        renderDuplicateCandidates();
+        showToast("この2人を別人として除外しました。");
+      } catch (error) { showToast(readableError(error, "候補を除外できませんでした。"), true); }
+    } else {
+      elements.duplicateDialog.close();
+      openMergeDialog(ids[0], ids[1]);
+    }
+  }
+
+  async function handleMergeSubmit(event) {
+    event.preventDefault();
+    elements.mergeError.hidden = true;
+    if (!state.mergePair) return;
+    const keep = elements.mergeKeepChoices.querySelector("input[name=mergeKeep]:checked");
+    if (!keep) return;
+    const keepId = keep.value;
+    const mergeId = state.mergePair.find(function (id) { return id !== keepId; });
+    const selections = {};
+    MERGE_FIELD_SPECS.forEach(function (spec) {
+      const checked = elements.mergeFields.querySelector("input[name=merge-field-" + spec[0] + "]:checked");
+      selections[spec[0]] = checked ? checked.value : "keep";
+    });
+    const keepPerson = findPerson(keepId); const mergePerson = findPerson(mergeId);
+    if (!globalThis.confirm(fullName(mergePerson) + "を" + fullName(keepPerson) + "へ統合しますか？\n関係を付け替え、重複を整理した後、統合元の人物を削除します。元に戻せません。")) return;
+    setBusy(elements.mergeSubmitButton, true, "統合中…");
+    try {
+      const result = await DB.mergePersons(keepId, mergeId, selections);
+      elements.mergeDialog.close();
+      state.mergePair = null;
+      await refreshData({ revealPersonId: result.person.id });
+      openDetail(result.person.id);
+      showToast("人物を統合し、関係を安全に整理しました。");
+    } catch (error) {
+      elements.mergeError.textContent = readableError(error, "人物を統合できませんでした。");
+      elements.mergeError.hidden = false;
+    } finally { setBusy(elements.mergeSubmitButton, false); }
+  }
+
+  function bindEvents() {
+    bindDialogs();
+    bindTreeGestures();
+    document.querySelectorAll("[data-app-view]").forEach(function (button) { button.addEventListener("click", function () { switchAppView(button.dataset.appView); }); });
+    document.querySelectorAll("[data-add-person]").forEach(function (button) {
+      button.addEventListener("click", function () { state.personFormContext = null; openPersonDialog(null); });
+    });
+    elements.menuButton.addEventListener("click", function () { elements.settingsDialog.showModal(); });
+    elements.mobileMenuButton.addEventListener("click", function () { elements.settingsDialog.showModal(); });
+    elements.detailBackdrop.addEventListener("click", closeDetail);
+    elements.zoomInButton.addEventListener("click", function () { zoomAt(state.transform.scale * 1.18); });
+    elements.zoomOutButton.addEventListener("click", function () { zoomAt(state.transform.scale / 1.18); });
+    elements.centerButton.addEventListener("click", centerTree);
+    elements.focusButton.addEventListener("click", function () { renderFocusList(); elements.focusDialog.showModal(); });
+    elements.viewRangeButton.addEventListener("click", openViewRangeDialog);
+    elements.viewSummary.addEventListener("click", openViewRangeDialog);
+    elements.treeViewMode.addEventListener("change", updateKinshipField);
+    elements.retryButton.addEventListener("click", bootData);
+    elements.privacyNotice.querySelector("[data-dismiss-notice]").addEventListener("click", function () { elements.privacyNotice.hidden = true; });
+    elements.personSearch.addEventListener("input", function () { renderSearchResults(); renderPersonList(); });
+    elements.searchResults.addEventListener("click", function (event) {
+      const result = event.target.closest("[data-search-person]");
+      if (!result) return;
+      openDetail(result.dataset.searchPerson);
+      elements.personSearch.value = "";
+      renderSearchResults();
+    });
+    document.addEventListener("click", function (event) { if (!event.target.closest(".search-wrap")) elements.searchResults.hidden = true; });
+    elements.isDeceased.addEventListener("change", updateDeathDateState);
+    elements.givenName.addEventListener("input", function () { if (!state.photoValue) updatePhotoPreview(); });
+    elements.photoInput.addEventListener("change", async function () {
+      const file = elements.photoInput.files && elements.photoInput.files[0];
+      if (!file) return;
+      try {
+        const result = await readPhoto(file);
+        state.photoValue = result.dataUrl;
+        state.photoInfo = result;
+        elements.photoCompressionNotice.textContent = result.compressed
+          ? "写真を " + result.width + "×" + result.height + "px・約" + Math.max(1, Math.round(result.compressedBytes / 1024)) + "KBへ圧縮しました。"
+          : "写真を保存用に調整しました（約" + Math.max(1, Math.round(result.compressedBytes / 1024)) + "KB）。";
+        updatePhotoPreview();
+      }
+      catch (error) { showToast(readableError(error, "写真を読み込めませんでした。"), true); }
+      finally { elements.photoInput.value = ""; }
+    });
+    elements.removePhotoButton.addEventListener("click", function () { state.photoValue = ""; updatePhotoPreview(); });
+    ["birth", "death"].forEach(function (kind) {
+      ["DatePrecision", "DateYear", "DateMonth", "DateDay", "DateApproximate"].forEach(function (suffix) {
+        elements[kind + suffix].addEventListener("change", function () { updateDateEditor(kind); });
+        if (suffix === "DateYear") elements[kind + suffix].addEventListener("input", function () { updateDateEditor(kind); });
+      });
+    });
+    elements.personForm.addEventListener("submit", handlePersonSubmit);
+    elements.relationKind.addEventListener("change", updateRelationshipKind);
+    elements.relationshipForm.addEventListener("submit", handleRelationshipSubmit);
+    elements.detailContent.addEventListener("click", handleDetailClick);
+    elements.relativeRole.addEventListener("change", updateRelativeRole);
+    document.querySelectorAll("[data-relative-source]").forEach(function (button) {
+      button.addEventListener("click", function () { setRelativeSource(button.dataset.relativeSource); });
+    });
+    elements.relativePersonSearch.addEventListener("input", renderRelativePersonResults);
+    elements.relativePersonResults.addEventListener("click", function (event) {
+      const button = event.target.closest("[data-existing-relative]");
+      if (!button) return;
+      state.selectedExistingRelativeId = button.dataset.existingRelative;
+      renderRelativePersonResults();
+    });
+    elements.relativeForm.addEventListener("submit", handleRelativeSubmit);
+    elements.relationshipMenuDialog.addEventListener("click", handleRelationshipMenuAction);
+    elements.focusPersonList.addEventListener("click", handleFocusSelection);
+    elements.viewRangeForm.addEventListener("submit", handleViewRangeSubmit);
+    elements.peopleSort.addEventListener("change", renderPersonList);
+    elements.peopleFilter.addEventListener("change", renderPersonList);
+    elements.personList.addEventListener("click", function (event) { const button = event.target.closest("[data-list-person]"); if (button) openDetail(button.dataset.listPerson); });
+    elements.issuesButton.addEventListener("click", openIssuesDialog);
+    elements.openIssuesButton.addEventListener("click", openIssuesDialog);
+    elements.openPeopleButton.addEventListener("click", function () { elements.settingsDialog.close(); switchAppView("people"); });
+    elements.issuesContent.addEventListener("click", function (event) { const button = event.target.closest("[data-edit-issue]"); if (!button) return; elements.issuesDialog.close(); state.personFormContext = null; openPersonDialog(findPerson(button.dataset.editIssue)); });
+    elements.duplicateButton.addEventListener("click", openDuplicateDialog);
+    elements.duplicateContent.addEventListener("click", handleDuplicateAction);
+    elements.mergeKeepChoices.addEventListener("change", renderMergeForm);
+    elements.mergeForm.addEventListener("submit", handleMergeSubmit);
+    elements.mergeBackupButton.addEventListener("click", exportBackup);
+    elements.exportButton.addEventListener("click", exportBackup);
+    elements.importInput.addEventListener("change", importBackup);
+    elements.openPngButton.addEventListener("click", openPngDialog);
+    elements.pngForm.addEventListener("submit", handlePngSubmit);
+    elements.openPrintButton.addEventListener("click", openPrintDialog);
+    elements.printForm.addEventListener("input", renderPrintPreview);
+    elements.printForm.addEventListener("submit", handlePrintSubmit);
+    elements.resetSampleButton.addEventListener("click", resetSamples);
+    elements.deleteAllButton.addEventListener("click", deleteAllData);
+    globalThis.addEventListener("resize", function () { if (matchMedia("(min-width: 841px)").matches) elements.detailBackdrop.hidden = true; });
+  }
+
+  function personFromForm() {
+    const birth = readDateEditor("birth");
+    const death = elements.isDeceased.checked ? readDateEditor("death") : { value: "", precision: "unknown", approximate: false };
+    return {
+      id: elements.personId.value, familyName: elements.familyName.value, givenName: elements.givenName.value,
+      formerFamilyName: elements.formerFamilyName.value, familyNameKana: elements.familyNameKana.value,
+      givenNameKana: elements.givenNameKana.value, nickname: elements.nickname.value, otherNames: elements.otherNames.value,
+      honorific: elements.honorific.value, nameMemo: elements.nameMemo.value, gender: elements.gender.value,
+      birthDate: birth.value, birthDatePrecision: birth.precision, birthDateApproximate: birth.approximate,
+      deathDate: death.value, deathDatePrecision: death.precision, deathDateApproximate: death.approximate,
+      isDeceased: elements.isDeceased.checked, birthplace: elements.birthplace.value,
+      photo: state.photoValue, memo: elements.memo.value
+    };
+  }
+
+  async function handlePersonSubmit(event) {
+    event.preventDefault();
+    elements.personFormError.hidden = true;
+    let person;
+    try { person = personFromForm(); }
+    catch (error) { elements.personFormError.textContent = readableError(error, "年月日を確認してください。"); elements.personFormError.hidden = false; return; }
+    const wasEdit = Boolean(person.id);
+    const context = state.personFormContext;
+    setBusy(elements.savePersonButton, true, "保存中…");
+    state.personSaving = true;
+    try {
+      if (context && context.mode === "relative") {
+        const result = await DB.saveRelativePerson(context.baseId, person, context.spec);
+        state.personFormContext = null;
+        elements.personDialog.close();
+        closeDetail();
+        await refreshData({ revealPersonId: result.person.id });
+        showToast(context.label + "を人物情報と同時に追加しました。");
+      } else {
+        const saved = await DB.savePerson(person);
+        if (!state.settings.focusPersonId) state.settings = await DB.saveSettings({ focusPersonId: saved.id });
+        elements.personDialog.close();
+        await refreshData({ revealPersonId: wasEdit ? "" : saved.id });
+        openDetail(saved.id);
+        showToast(wasEdit ? "人物情報を更新しました。" : "人物を追加しました。");
+      }
+    } catch (error) {
+      elements.personFormError.textContent = readableError(error, "人物を保存できませんでした。");
+      elements.personFormError.hidden = false;
+    } finally {
+      state.personSaving = false;
+      setBusy(elements.savePersonButton, false);
+    }
+  }
+
+  async function handleRelationshipSubmit(event) {
+    event.preventDefault();
+    elements.relationshipFormError.hidden = true;
+    const baseId = elements.relationshipBaseId.value;
+    const targetId = elements.relationTarget.value;
+    const kind = elements.relationKind.value;
+    let fromPersonId = baseId;
+    let toPersonId = targetId;
+    if (kind === "parent-child") {
+      const checked = elements.relationshipForm.querySelector("input[name=parentDirection]:checked");
+      if (checked && checked.value === "base-child") { fromPersonId = targetId; toPersonId = baseId; }
+    }
+    setBusy(elements.saveRelationshipButton, true, "保存中…");
+    try {
+      await DB.saveRelationship({
+        id: elements.relationshipId.value, type: kind, fromPersonId: fromPersonId, toPersonId: toPersonId,
+        relationshipType: elements.relationType.value, status: kind === "partner" ? elements.relationStatus.value : "",
+        startDate: elements.relationStartDate.value, endDate: elements.relationEndDate.value, memo: elements.relationMemo.value
+      });
+      elements.relationshipDialog.close();
+      elements.relationKind.disabled = false;
+      elements.relationTarget.disabled = false;
+      await refreshData();
+      showToast(elements.relationshipId.value ? "関係を更新しました。" : "関係を追加しました。");
+    } catch (error) {
+      elements.relationshipFormError.textContent = readableError(error, "関係を保存できませんでした。");
+      elements.relationshipFormError.hidden = false;
+    } finally { setBusy(elements.saveRelationshipButton, false); }
+  }
+
+  async function handleRelativeSubmit(event) {
+    event.preventDefault();
+    elements.relativeFormError.hidden = true;
+    const baseId = elements.relativeBaseId.value;
+    const info = relativeRoleInfo();
+    const spec = quickRelationSpec();
+    if (state.relativeSource === "new") {
+      state.personFormContext = { mode: "relative", baseId: baseId, spec: spec, label: info.label };
+      elements.relativeDialog.close();
+      openPersonDialog(null, { title: info.label + "を追加", suggestedGender: info.suggestedGender });
+      return;
+    }
+    if (!state.selectedExistingRelativeId) {
+      elements.relativeFormError.textContent = "登録済み人物を1人選んでください。";
+      elements.relativeFormError.hidden = false;
+      return;
+    }
+    setBusy(elements.relativeContinueButton, true, "保存中…");
+    try {
+      await DB.saveRelationship(relationshipFromRelative(baseId, state.selectedExistingRelativeId, spec));
+      const revealId = state.selectedExistingRelativeId;
+      elements.relativeDialog.close();
+      closeDetail();
+      await refreshData({ revealPersonId: revealId });
+      showToast("登録済み人物との関係を追加しました。");
+    } catch (error) {
+      elements.relativeFormError.textContent = readableError(error, "関係を保存できませんでした。");
+      elements.relativeFormError.hidden = false;
+    } finally { setBusy(elements.relativeContinueButton, false); }
+  }
+
+  async function handleDetailClick(event) {
+    if (event.target.closest("[data-close-detail]")) { closeDetail(); return; }
+    const relativeButton = event.target.closest("[data-open-person]");
+    if (relativeButton) { openDetail(relativeButton.dataset.openPerson); return; }
+    const menuButton = event.target.closest("[data-relationship-menu]");
+    if (menuButton) { openRelationshipMenu(menuButton.dataset.relationshipMenu, menuButton.dataset.relativeId, menuButton.dataset.group); return; }
+    if (event.target.closest("[data-edit-person]")) { state.personFormContext = null; openPersonDialog(findPerson(state.selectedPersonId)); return; }
+    if (event.target.closest("[data-add-relative]")) { openRelativeDialog(state.selectedPersonId); return; }
+    if (event.target.closest("[data-add-relation]")) { openRelationshipDialog(state.selectedPersonId, null); return; }
+    if (event.target.closest("[data-set-focus]")) {
+      try {
+        state.settings = await DB.saveSettings({ focusPersonId: state.selectedPersonId });
+        renderTree(); renderDetail(); requestAnimationFrame(function () { revealPerson(state.selectedPersonId); });
+        showToast("基準人物に設定しました。");
+      } catch (error) { showToast(readableError(error, "基準人物を保存できませんでした。"), true); }
+      return;
+    }
+    if (event.target.closest("[data-delete-person]")) {
+      const person = findPerson(state.selectedPersonId);
+      if (!person || !globalThis.confirm(fullName(person) + "を削除しますか？\nこの人物に関連する親子・パートナー関係も削除されます。この操作は元に戻せません。")) return;
+      try { await DB.deletePerson(person.id); closeDetail(); await refreshData(); showToast("人物と関連する関係を削除しました。"); }
+      catch (error) { showToast(readableError(error, "人物を削除できませんでした。"), true); }
+    }
+  }
+
+  async function handleRelationshipMenuAction(event) {
+    const button = event.target.closest("[data-menu-action]");
+    if (!button || !state.relationshipMenu) return;
+    const action = button.dataset.menuAction;
+    const menu = state.relationshipMenu;
+    if (action === "open") {
+      elements.relationshipMenuDialog.close();
+      openDetail(menu.relativeId);
+    } else if (action === "edit") {
+      const relationship = findRelationship(menu.relationshipId);
+      elements.relationshipMenuDialog.close();
+      openRelationshipDialog(menu.baseId, relationship);
+    } else if (action === "unlink") {
+      const person = findPerson(menu.relativeId);
+      if (!globalThis.confirm(fullName(person) + "との関係を解除しますか？\n人物情報そのものは削除されません。")) return;
+      try {
+        await DB.deleteRelationship(menu.relationshipId);
+        elements.relationshipMenuDialog.close();
+        await refreshData();
+        showToast("関係を解除しました。人物情報は残っています。");
+      } catch (error) { showToast(readableError(error, "関係を解除できませんでした。"), true); }
+    } else if (action === "up" || action === "down" || action === "reset") {
+      try { await changeRelationOrder(action); }
+      catch (error) { showToast(readableError(error, "表示順を変更できませんでした。"), true); }
+    }
+  }
+
+  async function handleFocusSelection(event) {
+    const button = event.target.closest("[data-focus-person]");
+    if (!button) return;
+    try {
+      state.settings = await DB.saveSettings({ focusPersonId: button.dataset.focusPerson });
+      elements.focusDialog.close();
+      renderTree();
+      if (state.selectedPersonId) renderDetail();
+      requestAnimationFrame(function () { revealPerson(button.dataset.focusPerson); });
+      showToast("基準人物を変更しました。");
+    } catch (error) { showToast(readableError(error, "基準人物を保存できませんでした。"), true); }
+  }
+
+  function downloadBlob(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+  }
+
+  async function exportBackup() {
+    setBusy(elements.exportButton, true, "作成中…");
+    try {
+      const backup = await DB.createBackup();
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json;charset=utf-8" });
+      downloadBlob(blob, "family-tree-note-backup-" + new Date().toISOString().slice(0, 10).replace(/-/g, "") + ".json");
+      showToast("試作3形式のバックアップを書き出しました。");
+    } catch (error) { showToast(readableError(error, "バックアップを作成できませんでした。"), true); }
+    finally { setBusy(elements.exportButton, false); }
+  }
+
+  async function importBackup() {
+    const file = elements.importInput.files && elements.importInput.files[0];
+    elements.importInput.value = "";
+    if (!file) return;
+    if (file.size > 60 * 1024 * 1024) { showToast("バックアップファイルが大きすぎます。", true); return; }
+    if (!globalThis.confirm("現在の全データを、選択したバックアップの内容で置き換えますか？")) return;
+    try {
+      const text = await file.text();
+      let value;
+      try { value = JSON.parse(text); } catch (error) { throw new Error("JSONファイルを読み取れません。ファイルが壊れていないか確認してください。"); }
+      await DB.restoreBackup(value);
+      closeDetail();
+      await refreshData({ center: true });
+      elements.settingsDialog.close();
+      showToast("バックアップから復元しました。");
+    } catch (error) { showToast(readableError(error, "バックアップを復元できませんでした。"), true); }
+  }
+
+  function exportSvgStyles() {
+    return "text{font-family:'Yu Gothic UI','Hiragino Kaku Gothic ProN',Meiryo,sans-serif}" +
+      ".tree-link{fill:none;stroke:#9aab9e;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.tree-partner-link{stroke:#718c79;stroke-width:3}.tree-partner-link.is-separated{stroke-dasharray:11 8}.tree-partner-link.is-unknown{stroke:#aeb7b0;stroke-width:2}.tree-partner-marker{stroke:#61776a;stroke-width:2.4}.tree-parent-adoptive{stroke-dasharray:10 7}.tree-parent-step{stroke-width:1.6;stroke-dasharray:2 7}.tree-disconnected-divider{stroke:#c8c9bf;stroke-width:1.5;stroke-dasharray:5 7}.tree-disconnected-label{fill:#68756d;font-size:13px;font-weight:700}" +
+      ".tree-generation-label{fill:#557c64;font-size:13px;font-weight:700}.tree-node-card{fill:#fffef9;stroke:#d6d5c9;stroke-width:1.5}.tree-node.is-focus .tree-node-card{stroke:#557c64;stroke-width:3}.tree-node-photo-bg{fill:#e3eee5}.tree-node-initial{fill:#3f6250;font-size:23px;font-weight:700;text-anchor:middle;dominant-baseline:central}.tree-node-name{fill:#2c3a32;font-size:16px;font-weight:700;text-anchor:middle}.tree-node-former{fill:#68756d;font-size:11px;text-anchor:middle}.tree-node-years{fill:#68756d;font-size:12px;text-anchor:middle}.tree-node-deceased{fill:#ecebe4;stroke:#d6d5c9}.tree-node-deceased-text{fill:#68756d;font-size:10px;text-anchor:middle}.tree-node-focus-badge{fill:#557c64}.tree-node-focus-text{fill:white;font-size:9px;font-weight:700;text-anchor:middle}";
+  }
+
+  function privacyInitial(person) {
+    const family = Array.from(person.familyName || "")[0] || "";
+    const given = Array.from(person.givenName || "")[0] || "";
+    return (family + given) || "非公開";
+  }
+
+  function applyPrivacyToSvg(svg, persons, mode) {
+    if (mode === "all") return;
+    const personMap = new Map(persons.map(function (person) { return [person.id, person]; }));
+    svg.querySelectorAll(".tree-node").forEach(function (node) {
+      const person = personMap.get(node.getAttribute("data-person-id"));
+      if (!person || person.isDeceased) return;
+      const title = node.querySelector("title");
+      if (title) title.textContent = mode === "initials" ? privacyInitial(person) : fullName(person);
+      node.setAttribute("aria-label", mode === "initials" ? privacyInitial(person) : fullName(person));
+      const years = node.querySelector(".tree-node-years");
+      if (years) years.textContent = "";
+      if (mode === "hide-photo-dates" || mode === "initials") {
+        node.querySelectorAll("image").forEach(function (image) { image.remove(); });
+        if (!node.querySelector(".tree-node-initial")) {
+          const initial = svgElement("text", { class: "tree-node-initial", x: state.layout ? state.layout.cardWidth / 2 : 92, y: 32 });
+          initial.textContent = privacyInitial(person);
+          node.appendChild(initial);
+        }
+      }
+      if (mode === "initials") {
+        const name = node.querySelector(".tree-node-name");
+        if (name) name.textContent = privacyInitial(person);
+        const former = node.querySelector(".tree-node-former");
+        if (former) former.textContent = "";
+      }
+    });
+  }
+
+  function createStandaloneSvg(view, showGenerationLabels, privacyMode, pixelScale) {
+    const scene = createTreeScene(view.persons, view.relationships, showGenerationLabels);
+    const bounds = scene.layout.bounds;
+    const scale = pixelScale || 1;
+    const svg = svgElement("svg", {
+      xmlns: SVG_NS,
+      width: Math.max(1, Math.round(bounds.width * scale)),
+      height: Math.max(1, Math.round(bounds.height * scale)),
+      viewBox: bounds.x + " " + bounds.y + " " + bounds.width + " " + bounds.height,
+      preserveAspectRatio: "xMidYMid meet"
+    });
+    const style = svgElement("style", {}); style.textContent = exportSvgStyles(); svg.appendChild(style);
+    svg.appendChild(svgElement("rect", { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, fill: "#f7f3e8" }));
+    svg.appendChild(scene.fragment);
+    applyPrivacyToSvg(svg, view.persons, privacyMode);
+    return { svg: svg, layout: scene.layout };
+  }
+
+  function imageFromUrl(url) {
+    return new Promise(function (resolve, reject) {
+      const image = new Image();
+      image.onload = function () { resolve(image); };
+      image.onerror = function () { reject(new Error("SVGを画像へ変換できませんでした。")); };
+      image.src = url;
+    });
+  }
+
+  function canvasToBlob(canvas) {
+    return new Promise(function (resolve, reject) {
+      if (canvas.toBlob) {
+        canvas.toBlob(function (blob) { blob ? resolve(blob) : reject(new Error("PNGを作成できませんでした。")); }, "image/png");
+      } else {
+        try {
+          const parts = canvas.toDataURL("image/png").split(",");
+          const bytes = atob(parts[1]);
+          const data = new Uint8Array(bytes.length);
+          for (let i = 0; i < bytes.length; i += 1) data[i] = bytes.charCodeAt(i);
+          resolve(new Blob([data], { type: "image/png" }));
+        } catch (error) { reject(error); }
+      }
+    });
+  }
+
+  function openPngDialog() {
+    if (elements.settingsDialog.open) elements.settingsDialog.close();
+    elements.pngPrivacyMode.value = state.settings.outputPrivacyMode || "hide-dates";
+    elements.pngError.hidden = true;
+    elements.pngDialog.showModal();
+  }
+
+  async function handlePngSubmit(event) {
+    event.preventDefault();
+    await saveTreeAsPng(elements.pngPrivacyMode.value);
+  }
+
+  async function saveTreeAsPng(privacyMode) {
+    if (!state.layout || !state.layout.nodes.length) { showToast("画像にする人物が登録されていません。", true); return; }
+    setBusy(elements.savePngButton, true, "画像を作成中…");
+    let svgUrl = "";
+    try {
+      state.settings = await DB.saveSettings({ outputPrivacyMode: privacyMode });
+      const view = { persons: state.visiblePersons, relationships: state.visibleRelationships };
+      const bounds = state.layout.bounds;
+      const baseArea = Math.max(1, bounds.width * bounds.height);
+      // Large canvases can exhaust memory on mobile Safari and headless Chromium.
+      // Keep the full SVG in frame while capping raster output to about 16 MP.
+      const exportScale = Math.max(1, Math.min(2, 6000 / Math.max(bounds.width, bounds.height), Math.sqrt(16000000 / baseArea)));
+      const result = createStandaloneSvg(view, state.settings.showGenerationLabels, privacyMode, exportScale);
+      const svg = result.svg;
+      const width = Number(svg.getAttribute("width"));
+      const height = Number(svg.getAttribute("height"));
+      const serialized = new XMLSerializer().serializeToString(svg);
+      svgUrl = URL.createObjectURL(new Blob([serialized], { type: "image/svg+xml;charset=utf-8" }));
+      const image = await imageFromUrl(svgUrl);
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("画像を作成できないブラウザです。");
+      context.fillStyle = "#f7f3e8";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      const blob = await canvasToBlob(canvas);
+      downloadBlob(blob, "家系図ノート_" + new Date().toISOString().slice(0, 10) + ".png");
+      elements.pngDialog.close();
+      showToast("家系図全体をPNG画像に保存しました。");
+    } catch (error) { elements.pngError.textContent = readableError(error, "家系図の画像保存に失敗しました。"); elements.pngError.hidden = false; showToast(elements.pngError.textContent, true); }
+    finally {
+      if (svgUrl) URL.revokeObjectURL(svgUrl);
+      setBusy(elements.savePngButton, false);
+    }
+  }
+
+  function openPrintDialog() {
+    if (elements.settingsDialog.open) elements.settingsDialog.close();
+    const settings = state.settings.printSettings || {};
+    elements.printTitle.value = settings.title || "家系図ノート";
+    elements.printNote.value = settings.note || "";
+    elements.printPaperSize.value = settings.paperSize || "auto";
+    elements.printScope.value = settings.scope || "current";
+    elements.printPrivacyMode.value = settings.privacyMode || "hide-dates";
+    elements.printShowDate.checked = settings.showDate !== false;
+    elements.printShowGenerationLabels.checked = Boolean(settings.showGenerationLabels);
+    renderPrintPreview();
+    elements.printDialog.showModal();
+  }
+
+  function renderPrintPreview() {
+    if (!elements.printPreview) return;
+    const scopeText = elements.printScope.value === "all" ? "登録人物全員" : viewModeLabel();
+    const paper = elements.printPaperSize.options[elements.printPaperSize.selectedIndex];
+    elements.printPreview.innerHTML = "<strong>印刷プレビュー</strong><p>「" + escapeHtml(elements.printTitle.value || "無題") + "」を、" + escapeHtml(paper ? paper.textContent : "自動") + "・" + escapeHtml(scopeText) + "で印刷します。</p>";
+  }
+
+  function paperPageRule(value) {
+    return { "a4-portrait": "A4 portrait", "a4-landscape": "A4 landscape", "a3-portrait": "A3 portrait", "a3-landscape": "A3 landscape" }[value] || "auto";
+  }
+
+  async function handlePrintSubmit(event) {
+    event.preventDefault();
+    setBusy(elements.printButton, true, "準備中…");
+    try {
+      const printSettings = {
+        title: elements.printTitle.value,
+        note: elements.printNote.value,
+        paperSize: elements.printPaperSize.value,
+        scope: elements.printScope.value,
+        privacyMode: elements.printPrivacyMode.value,
+        showDate: elements.printShowDate.checked,
+        showGenerationLabels: elements.printShowGenerationLabels.checked
+      };
+      state.settings = await DB.saveSettings({ printSettings: printSettings });
+      const view = printSettings.scope === "all" ? getTreeViewData(true) : { persons: state.visiblePersons, relationships: state.visibleRelationships };
+      if (!view.persons.length) throw new Error("印刷する人物がいません。");
+      const result = createStandaloneSvg(view, printSettings.showGenerationLabels, printSettings.privacyMode, 1);
+      result.svg.removeAttribute("width"); result.svg.removeAttribute("height"); result.svg.classList.add("print-tree-svg");
+      elements.printArea.replaceChildren();
+      const header = document.createElement("header");
+      header.innerHTML = "<h1>" + escapeHtml(printSettings.title || "家系図ノート") + "</h1>" + (printSettings.note ? "<p>" + escapeHtml(printSettings.note) + "</p>" : "") + (printSettings.showDate ? "<small>作成日：" + new Date().toLocaleDateString("ja-JP") + "</small>" : "");
+      const tree = document.createElement("div"); tree.className = "print-tree"; tree.appendChild(result.svg);
+      elements.printArea.append(header, tree);
+      elements.printPageStyle.textContent = "@page{size:" + paperPageRule(printSettings.paperSize) + ";margin:10mm}";
+      elements.printArea.setAttribute("aria-hidden", "false");
+      document.body.classList.add("is-printing");
+      elements.printDialog.close();
+      const cleanup = function () { document.body.classList.remove("is-printing"); elements.printArea.setAttribute("aria-hidden", "true"); };
+      globalThis.addEventListener("afterprint", cleanup, { once: true });
+      setTimeout(function () { globalThis.print(); setTimeout(cleanup, 5000); }, 80);
+    } catch (error) { showToast(readableError(error, "印刷の準備に失敗しました。"), true); }
+    finally { setBusy(elements.printButton, false); }
+  }
+
+  async function resetSamples() {
+    if (!globalThis.confirm("現在の全データを削除し、試作3のサンプル家族に置き換えますか？\n必要なデータは先にJSONへ書き出してください。")) return;
+    setBusy(elements.resetSampleButton, true, "登録中…");
+    try { await DB.resetSampleData(); closeDetail(); await refreshData({ center: true }); elements.settingsDialog.close(); showToast("試作3のサンプルデータを再登録しました。"); }
+    catch (error) { showToast(readableError(error, "サンプルデータを登録できませんでした。"), true); }
+    finally { setBusy(elements.resetSampleButton, false); }
+  }
+
+  async function deleteAllData() {
+    if (!globalThis.confirm("人物・関係・写真をすべて削除します。\nこの操作は元に戻せません。実行しますか？")) return;
+    setBusy(elements.deleteAllButton, true, "削除中…");
+    try { await DB.clearAll(); closeDetail(); await refreshData({ center: true }); elements.settingsDialog.close(); showToast("この端末の全データを削除しました。"); }
+    catch (error) { showToast(readableError(error, "全データを削除できませんでした。"), true); }
+    finally { setBusy(elements.deleteAllButton, false); }
+  }
+
+  async function bootData() {
+    elements.treeLoading.hidden = false;
+    elements.treeError.hidden = true;
+    elements.treeEmpty.hidden = true;
+    try {
+      const data = await DB.initialize();
+      state.persons = data.persons;
+      state.relationships = data.relationships;
+      state.settings = data.settings;
+      state.duplicateExclusions = data.duplicateExclusions || [];
+      state.transform.scale = Number(data.settings.scale) || 1;
+      renderTree();
+      renderPersonList();
+      requestAnimationFrame(centerTree);
+    } catch (error) { showTreeError(error); }
+  }
+
+  function registerServiceWorker() {
+    if (!("serviceWorker" in navigator) || !/^https?:$/.test(location.protocol)) return;
+    navigator.serviceWorker.register("./sw.js").catch(function () { /* 通常機能は継続する */ });
+  }
+
+  globalThis.FamilyTreeAppTest = Object.freeze({
+    compressPhoto: readPhoto,
+    informationIssues: informationIssues,
+    getTreeViewData: function (forceAll) { return getTreeViewData(Boolean(forceAll)); },
+    formatPersonDate: formatPersonDate,
+    privacySnapshot: function (mode, forceAll) {
+      const view = forceAll ? getTreeViewData(true) : { persons: state.visiblePersons, relationships: state.visibleRelationships };
+      return createStandaloneSvg(view, state.settings.showGenerationLabels, mode, 1).svg.outerHTML;
+    }
+  });
+
+  function boot() {
+    try {
+      cacheElements();
+      if (!DB || !Layout) throw new Error("必要なプログラムを読み込めませんでした。");
+      populateDateSelects();
+      bindEvents();
+      bootData();
+      registerServiceWorker();
+    } catch (error) {
+      const app = document.getElementById("app");
+      const template = document.getElementById("fatalTemplate");
+      if (app && template) app.replaceWith(template.content.cloneNode(true));
+    }
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, { once: true });
+  else boot();
+}());

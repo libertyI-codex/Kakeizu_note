@@ -1,0 +1,20 @@
+{
+  "name": "家系図ノート",
+  "short_name": "家系図ノート",
+  "description": "部分的な年月日、人物整理、範囲表示、プライバシー印刷に対応した端末内保存の家系図アプリ（Ver.1.0 試作3）",
+  "version": "1.0.0-prototype.3",
+  "lang": "ja",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f3e8",
+  "theme_color": "#557c64",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

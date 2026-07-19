@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="家系図ノート">
+  <rect width="512" height="512" rx="112" fill="#557c64"/>
+  <path d="M106 243 256 115l150 128v159a30 30 0 0 1-30 30H136a30 30 0 0 1-30-30Z" fill="#fffef9"/>
+  <path d="M74 255 256 99l182 156" fill="none" stroke="#e8d9b8" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="256" cy="235" r="45" fill="#557c64"/>
+  <circle cx="181" cy="338" r="36" fill="#88a48f"/>
+  <circle cx="331" cy="338" r="36" fill="#88a48f"/>
+  <path d="M256 280v34m0 0h-75v-2m75 2h75v-2" fill="none" stroke="#557c64" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
