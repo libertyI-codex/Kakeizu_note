@@ -8,6 +8,9 @@
   const GENERATION_GAP = 112;
   const DISCONNECTED_GAP = 96;
   const PADDING = 84;
+  const FAMILY_LANE_GAP = 14;
+  const FAMILY_INTERVAL_MARGIN = 12;
+  const FAMILY_BUS_STUB = 8;
 
   function displayName(person) {
     return ((person.familyName || "") + " " + (person.givenName || "")).trim();
@@ -215,6 +218,225 @@
     return Array.from(groups.values());
   }
 
+  function familyPairKey(firstId, secondId) {
+    return [firstId, secondId].sort().join("--");
+  }
+
+  function buildFamilyUnits(persons, relationships) {
+    const personIds = new Set(persons.map(function (person) { return person.id; }));
+    const partnerByKey = new Map();
+    const units = new Map();
+
+    function ensurePartnerUnit(relationship) {
+      const parentIds = [relationship.fromPersonId, relationship.toPersonId].sort();
+      const familyKey = familyPairKey(parentIds[0], parentIds[1]);
+      if (!units.has(familyKey)) {
+        units.set(familyKey, {
+          familyKey: familyKey,
+          parentIds: parentIds,
+          partnerRelationship: relationship,
+          children: []
+        });
+      }
+      return units.get(familyKey);
+    }
+
+    function ensureSingleParentUnit(parentId) {
+      const familyKey = parentId;
+      if (!units.has(familyKey)) {
+        units.set(familyKey, {
+          familyKey: familyKey,
+          parentIds: [parentId],
+          partnerRelationship: null,
+          children: []
+        });
+      }
+      return units.get(familyKey);
+    }
+
+    relationships.forEach(function (relationship) {
+      if (relationship.type !== "partner") return;
+      if (!personIds.has(relationship.fromPersonId) || !personIds.has(relationship.toPersonId)) return;
+      const key = familyPairKey(relationship.fromPersonId, relationship.toPersonId);
+      if (partnerByKey.has(key)) return;
+      partnerByKey.set(key, relationship);
+      ensurePartnerUnit(relationship);
+    });
+
+    const parentsByChild = new Map();
+    relationships.forEach(function (relationship) {
+      if (relationship.type !== "parent-child") return;
+      if (!personIds.has(relationship.fromPersonId) || !personIds.has(relationship.toPersonId)) return;
+      if (!parentsByChild.has(relationship.toPersonId)) parentsByChild.set(relationship.toPersonId, []);
+      parentsByChild.get(relationship.toPersonId).push(relationship);
+    });
+
+    parentsByChild.forEach(function (parentRelationships, childId) {
+      const usedRelationships = new Set();
+      for (let first = 0; first < parentRelationships.length; first += 1) {
+        for (let second = first + 1; second < parentRelationships.length; second += 1) {
+          const firstRelationship = parentRelationships[first];
+          const secondRelationship = parentRelationships[second];
+          if (usedRelationships.has(firstRelationship) || usedRelationships.has(secondRelationship)) continue;
+          const pairKey = familyPairKey(firstRelationship.fromPersonId, secondRelationship.fromPersonId);
+          const partnerRelationship = partnerByKey.get(pairKey);
+          if (!partnerRelationship) continue;
+          const unit = ensurePartnerUnit(partnerRelationship);
+          if (!unit.children.some(function (child) { return child.id === childId; })) {
+            unit.children.push({ id: childId, relationships: [firstRelationship, secondRelationship] });
+          }
+          usedRelationships.add(firstRelationship);
+          usedRelationships.add(secondRelationship);
+        }
+      }
+      parentRelationships.forEach(function (relationship) {
+        if (usedRelationships.has(relationship)) return;
+        const unit = ensureSingleParentUnit(relationship.fromPersonId);
+        const existing = unit.children.find(function (child) { return child.id === childId; });
+        if (existing) existing.relationships.push(relationship);
+        else unit.children.push({ id: childId, relationships: [relationship] });
+      });
+    });
+
+    return Array.from(units.values()).sort(function (first, second) {
+      const firstCreated = first.partnerRelationship && first.partnerRelationship.createdAt || "";
+      const secondCreated = second.partnerRelationship && second.partnerRelationship.createdAt || "";
+      return firstCreated.localeCompare(secondCreated) || first.familyKey.localeCompare(second.familyKey);
+    });
+  }
+
+  function intervalsAreSeparated(first, second) {
+    return first.end + FAMILY_INTERVAL_MARGIN < second.start || second.end + FAMILY_INTERVAL_MARGIN < first.start;
+  }
+
+  function routeFamilyUnits(persons, relationships, nodes, cardWidth, cardHeight) {
+    const nodeMap = new Map(nodes.map(function (node) { return [node.id, node]; }));
+    const units = buildFamilyUnits(persons, relationships);
+    const routes = units.map(function (unit) {
+      const parentNodes = unit.parentIds.map(function (id) { return nodeMap.get(id); }).filter(Boolean);
+      const children = unit.children.map(function (child) {
+        return { id: child.id, node: nodeMap.get(child.id), relationships: child.relationships };
+      }).filter(function (child) { return child.node; }).sort(function (first, second) {
+        return first.node.x - second.node.x || first.id.localeCompare(second.id);
+      });
+      const sourceX = parentNodes.length
+        ? parentNodes.reduce(function (sum, node) { return sum + node.x + cardWidth / 2; }, 0) / parentNodes.length
+        : 0;
+      const parentBottom = parentNodes.length ? Math.max.apply(null, parentNodes.map(function (node) { return node.y + cardHeight; })) : 0;
+      let partnerHasObstacles = false;
+      if (parentNodes.length === 2 && parentNodes[0].generation === parentNodes[1].generation) {
+        const leftCenter = Math.min(parentNodes[0].x, parentNodes[1].x) + cardWidth / 2;
+        const rightCenter = Math.max(parentNodes[0].x, parentNodes[1].x) + cardWidth / 2;
+        partnerHasObstacles = nodes.some(function (node) {
+          if (unit.parentIds.includes(node.id) || node.generation !== parentNodes[0].generation) return false;
+          const center = node.x + cardWidth / 2;
+          return center > leftCenter && center < rightCenter;
+        });
+      }
+      const partnerRouteY = parentBottom + 10;
+      const sourceY = partnerHasObstacles
+        ? partnerRouteY
+        : (parentNodes.length > 1 && parentNodes.every(function (node) { return node.generation === parentNodes[0].generation; })
+          ? parentNodes.reduce(function (sum, node) { return sum + node.y; }, 0) / parentNodes.length + cardHeight / 2
+          : parentBottom);
+      const childTop = children.length ? Math.min.apply(null, children.map(function (child) { return child.node.y; })) : parentBottom;
+      const centers = children.map(function (child) { return child.node.x + cardWidth / 2; });
+      let intervalStart = centers.length ? Math.min.apply(null, [sourceX].concat(centers)) : sourceX;
+      let intervalEnd = centers.length ? Math.max.apply(null, [sourceX].concat(centers)) : sourceX;
+      if (children.length && intervalEnd - intervalStart < FAMILY_BUS_STUB * 2) {
+        intervalStart -= FAMILY_BUS_STUB;
+        intervalEnd += FAMILY_BUS_STUB;
+      }
+      const parentGeneration = parentNodes.length ? Math.max.apply(null, parentNodes.map(function (node) { return node.generation; })) : 0;
+      const childGeneration = children.length ? Math.min.apply(null, children.map(function (child) { return child.node.generation; })) : parentGeneration;
+      const component = parentNodes[0] ? parentNodes[0].component : (children[0] ? children[0].node.component : 0);
+      return Object.assign({}, unit, {
+        parentNodes: parentNodes,
+        children: children,
+        sourceX: sourceX,
+        sourceY: sourceY,
+        partnerHasObstacles: partnerHasObstacles,
+        partnerRouteY: partnerRouteY,
+        parentBottom: parentBottom,
+        childTop: childTop,
+        interval: { start: intervalStart, end: intervalEnd },
+        layerKey: component + ":" + parentGeneration + ">" + childGeneration,
+        lane: -1,
+        busY: 0
+      });
+    });
+
+    const routesByLayer = new Map();
+    routes.filter(function (route) { return route.parentNodes.length && route.children.length; }).forEach(function (route) {
+      if (!routesByLayer.has(route.layerKey)) routesByLayer.set(route.layerKey, []);
+      routesByLayer.get(route.layerKey).push(route);
+    });
+
+    routesByLayer.forEach(function (layerRoutes) {
+      const lanes = [];
+      layerRoutes.sort(function (first, second) {
+        return first.interval.start - second.interval.start || first.interval.end - second.interval.end || first.familyKey.localeCompare(second.familyKey);
+      });
+      layerRoutes.forEach(function (route) {
+        let lane = 0;
+        while (lanes[lane] && !lanes[lane].every(function (interval) { return intervalsAreSeparated(interval, route.interval); })) lane += 1;
+        if (!lanes[lane]) lanes[lane] = [];
+        lanes[lane].push(route.interval);
+        route.lane = lane;
+      });
+
+      const lower = Math.max.apply(null, layerRoutes.map(function (route) { return route.parentBottom; })) + 14;
+      const upper = Math.min.apply(null, layerRoutes.map(function (route) { return route.childTop; })) - 16;
+      const maximumLane = Math.max.apply(null, layerRoutes.map(function (route) { return route.lane; }));
+      const preferredBase = lower + Math.max(8, Math.min(24, (upper - lower) * 0.28));
+      const availableForLanes = Math.max(0, upper - preferredBase);
+      const laneGap = maximumLane > 0 ? Math.max(2, Math.min(FAMILY_LANE_GAP, availableForLanes / maximumLane)) : FAMILY_LANE_GAP;
+      layerRoutes.forEach(function (route) { route.busY = preferredBase + route.lane * laneGap; });
+    });
+    return routes;
+  }
+
+  function centerParentGroups(groupsByGeneration, positions, relationships) {
+    const childrenByParent = new Map();
+    relationships.forEach(function (relationship) {
+      if (relationship.type !== "parent-child") return;
+      if (!childrenByParent.has(relationship.fromPersonId)) childrenByParent.set(relationship.fromPersonId, new Set());
+      childrenByParent.get(relationship.fromPersonId).add(relationship.toPersonId);
+    });
+    const generations = Array.from(groupsByGeneration.keys()).sort(function (first, second) { return second - first; });
+    generations.forEach(function (generation) {
+      const entries = groupsByGeneration.get(generation).map(function (group) {
+        const nodes = group.map(function (person) { return positions.get(person.id); }).filter(Boolean);
+        const left = Math.min.apply(null, nodes.map(function (node) { return node.x; }));
+        const right = Math.max.apply(null, nodes.map(function (node) { return node.x + CARD_WIDTH; }));
+        const childIds = new Set();
+        group.forEach(function (person) {
+          (childrenByParent.get(person.id) || []).forEach(function (childId) { childIds.add(childId); });
+        });
+        const childCenters = Array.from(childIds).map(function (childId) { return positions.get(childId); }).filter(Boolean).map(function (node) { return node.x + CARD_WIDTH / 2; });
+        return { group: group, nodes: nodes, left: left, right: right, childCenters: childCenters };
+      }).sort(function (first, second) { return first.left - second.left; });
+
+      entries.forEach(function (entry, index) {
+        if (!entry.childCenters.length) return;
+        const width = entry.right - entry.left;
+        const currentCenter = entry.left + width / 2;
+        const desiredCenter = entry.childCenters.reduce(function (sum, x) { return sum + x; }, 0) / entry.childCenters.length;
+        const limitedShift = Math.max(-FAMILY_GAP * 1.5, Math.min(FAMILY_GAP * 1.5, desiredCenter - currentCenter));
+        let targetLeft = entry.left + limitedShift;
+        const previous = entries[index - 1];
+        const next = entries[index + 1];
+        if (previous) targetLeft = Math.max(targetLeft, previous.right + FAMILY_GAP);
+        if (next) targetLeft = Math.min(targetLeft, next.left - FAMILY_GAP - width);
+        const shift = targetLeft - entry.left;
+        if (Math.abs(shift) < 0.5) return;
+        entry.nodes.forEach(function (node) { node.x += shift; });
+        entry.left += shift;
+        entry.right += shift;
+      });
+    });
+  }
+
   function computeTreeLayout(persons, relationships, focusPersonId) {
     if (!persons.length) {
       return { nodes: [], bounds: { x: 0, y: 0, width: 0, height: 0 }, cardWidth: CARD_WIDTH, cardHeight: CARD_HEIGHT, disconnectedStartY: 0 };
@@ -290,6 +512,14 @@
       });
     });
 
+    centerParentGroups(groupsByGeneration, positions, relationships);
+    const positionedNodes = Array.from(positions.values());
+    const minimumNodeX = Math.min.apply(null, positionedNodes.map(function (node) { return node.x; }));
+    if (minimumNodeX < PADDING) {
+      const horizontalShift = PADDING - minimumNodeX;
+      positionedNodes.forEach(function (node) { node.x += horizontalShift; });
+    }
+
     const nodes = persons.map(function (person) {
       return positions.get(person.id) || { id: person.id, x: 0, y: 0, generation: 0, component: 0, disconnected: false };
     });
@@ -312,8 +542,12 @@
 
   globalThis.TreeLayout = Object.freeze({
     compute: computeTreeLayout,
+    buildFamilyUnits: buildFamilyUnits,
+    routeFamilyUnits: routeFamilyUnits,
     comparePeople: comparePeople,
     CARD_WIDTH: CARD_WIDTH,
-    CARD_HEIGHT: CARD_HEIGHT
+    CARD_HEIGHT: CARD_HEIGHT,
+    FAMILY_LANE_GAP: FAMILY_LANE_GAP,
+    FAMILY_INTERVAL_MARGIN: FAMILY_INTERVAL_MARGIN
   });
 }());

@@ -2,7 +2,7 @@
   "use strict";
 
   const Legacy = globalThis.FamilyTreeDB;
-  const APP_VERSION = "1.0.0-prototype.4";
+  const APP_VERSION = "1.0.0-prototype.4-fix.1";
   const SCHEMA_VERSION = 4;
   const DB_VERSION = 4;
   const DB_NAME = "family-tree-note";

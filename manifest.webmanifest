@@ -1,8 +1,8 @@
 {
   "name": "家系図ノート",
   "short_name": "家系図ノート",
-  "description": "複数家系図、資料・引用、年表、スナップショット、GEDCOMに対応した端末内保存の家系図アプリ（Ver.1.0 試作4）",
-  "version": "1.0.0-prototype.4",
+  "description": "家族単位の親子線を独立描画する端末内保存の家系図アプリ（Ver.1.0 試作4 修正1）",
+  "version": "1.0.0-prototype.4-fix.1",
   "lang": "ja",
   "start_url": "./index.html",
   "scope": "./",

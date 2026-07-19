@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "family-tree-note-v4";
+const CACHE_NAME = "family-tree-note-v4-fix1";
 const APP_FILES = [
   "./",
   "./index.html",

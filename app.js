@@ -212,9 +212,9 @@
     return element;
   }
 
-  function addPath(parent, d, className) {
+  function addPath(parent, d, className, attributes) {
     if (!d || /NaN/.test(d)) return null;
-    const path = svgElement("path", { d: d, class: className || "tree-link" });
+    const path = svgElement("path", Object.assign({ d: d, class: className || "tree-link" }, attributes || {}));
     parent.appendChild(path);
     return path;
   }
@@ -235,101 +235,74 @@
     return className;
   }
 
-  function renderPartnerLine(fragment, relationship, from, to, cardWidth, cardHeight) {
+  function familyLineAttributes(family, role, childIds) {
+    return {
+      "data-family-key": family.familyKey,
+      "data-relation-role": role,
+      "data-parent-ids": family.parentIds.join(" "),
+      "data-child-ids": (childIds || family.children.map(function (child) { return child.id; })).join(" "),
+      "data-family-lane": family.lane
+    };
+  }
+
+  function renderPartnerLine(fragment, relationship, from, to, cardWidth, cardHeight, family) {
     const left = from.x < to.x ? from : to;
     const right = from.x < to.x ? to : from;
     const y = (left.y + right.y) / 2 + cardHeight / 2;
     const x1 = left.x + cardWidth;
     const x2 = right.x;
     const className = partnerLineClass(relationship);
+    const lineAttributes = familyLineAttributes(family, "partner-link");
+    if (family.partnerHasObstacles) {
+      const leftCenter = left.x + cardWidth / 2;
+      const rightCenter = right.x + cardWidth / 2;
+      addPath(fragment, "M " + leftCenter + " " + (left.y + cardHeight) + " V " + family.partnerRouteY + " H " + rightCenter + " V " + (right.y + cardHeight), className, lineAttributes);
+      return;
+    }
     if (left.generation === right.generation && x2 > x1) {
       const middle = (x1 + x2) / 2;
       if (relationship.status === "divorced" || relationship.status === "ended") {
-        addPath(fragment, "M " + x1 + " " + y + " H " + (middle - 7), className);
-        addPath(fragment, "M " + (middle + 7) + " " + y + " H " + x2, className);
-        addPath(fragment, "M " + (middle - 4) + " " + (y + 7) + " L " + (middle + 4) + " " + (y - 7), "tree-link tree-partner-marker");
+        addPath(fragment, "M " + x1 + " " + y + " H " + (middle - 7), className, lineAttributes);
+        addPath(fragment, "M " + (middle + 7) + " " + y + " H " + x2, className, lineAttributes);
+        addPath(fragment, "M " + (middle - 4) + " " + (y + 7) + " L " + (middle + 4) + " " + (y - 7), "tree-link tree-partner-marker", familyLineAttributes(family, "partner-status-marker"));
       } else {
-        addPath(fragment, "M " + x1 + " " + y + " H " + x2, className);
+        addPath(fragment, "M " + x1 + " " + y + " H " + x2, className, lineAttributes);
       }
       return;
     }
     const midY = Math.max(left.y, right.y) + cardHeight + 30;
-    addPath(fragment, "M " + (left.x + cardWidth / 2) + " " + (left.y + cardHeight) + " V " + midY + " H " + (right.x + cardWidth / 2) + " V " + (right.y + cardHeight), className);
+    addPath(fragment, "M " + (left.x + cardWidth / 2) + " " + (left.y + cardHeight) + " V " + midY + " H " + (right.x + cardWidth / 2) + " V " + (right.y + cardHeight), className, lineAttributes);
   }
 
-  function renderConnections(fragment, nodeMap, cardWidth, cardHeight, relationships) {
+  function renderConnections(fragment, layout, persons, relationships) {
     const sourceRelationships = relationships || state.relationships;
-    const partnerRelationships = sourceRelationships.filter(function (relationship) { return relationship.type === "partner"; });
-    const partnerKeys = new Set();
-    partnerRelationships.forEach(function (relationship) {
-      const from = nodeMap.get(relationship.fromPersonId);
-      const to = nodeMap.get(relationship.toPersonId);
-      if (!from || !to) return;
-      partnerKeys.add([relationship.fromPersonId, relationship.toPersonId].sort().join("|"));
-      renderPartnerLine(fragment, relationship, from, to, cardWidth, cardHeight);
-    });
-
-    const parentRelationships = sourceRelationships.filter(function (relationship) { return relationship.type === "parent-child"; });
-    const parentsByChild = new Map();
-    parentRelationships.forEach(function (relationship) {
-      if (!parentsByChild.has(relationship.toPersonId)) parentsByChild.set(relationship.toPersonId, []);
-      parentsByChild.get(relationship.toPersonId).push(relationship);
-    });
-    const familyGroups = new Map();
-    const handledLinks = new Set();
-    parentsByChild.forEach(function (relationships, childId) {
-      const parentIds = relationships.map(function (item) { return item.fromPersonId; });
-      let pair = null;
-      for (let i = 0; i < parentIds.length && !pair; i += 1) {
-        for (let j = i + 1; j < parentIds.length; j += 1) {
-          const key = [parentIds[i], parentIds[j]].sort().join("|");
-          if (partnerKeys.has(key)) { pair = [parentIds[i], parentIds[j]]; break; }
+    const nodeMap = new Map(layout.nodes.map(function (node) { return [node.id, node]; }));
+    const families = Layout.routeFamilyUnits(persons, sourceRelationships, layout.nodes, layout.cardWidth, layout.cardHeight);
+    families.forEach(function (family) {
+      const childIds = family.children.map(function (child) { return child.id; });
+      const group = svgElement("g", {
+        class: "tree-family-unit",
+        "data-family-key": family.familyKey,
+        "data-parent-ids": family.parentIds.join(" "),
+        "data-child-ids": childIds.join(" "),
+        "data-family-lane": family.lane
+      });
+      if (family.partnerRelationship && family.parentIds.length === 2) {
+        const firstParent = nodeMap.get(family.partnerRelationship.fromPersonId);
+        const secondParent = nodeMap.get(family.partnerRelationship.toPersonId);
+        if (firstParent && secondParent) {
+          renderPartnerLine(group, family.partnerRelationship, firstParent, secondParent, layout.cardWidth, layout.cardHeight, family);
         }
       }
-      if (!pair) return;
-      const key = pair.slice().sort().join("|");
-      if (!familyGroups.has(key)) familyGroups.set(key, { parentIds: pair, children: [] });
-      const pairRelationships = relationships.filter(function (item) { return pair.includes(item.fromPersonId); });
-      familyGroups.get(key).children.push({ id: childId, relationships: pairRelationships });
-      pair.forEach(function (parentId) { handledLinks.add(parentId + "|" + childId); });
-    });
-
-    familyGroups.forEach(function (family) {
-      const parentA = nodeMap.get(family.parentIds[0]);
-      const parentB = nodeMap.get(family.parentIds[1]);
-      const children = family.children.map(function (item) {
-        return { node: nodeMap.get(item.id), relationships: item.relationships };
-      }).filter(function (item) { return item.node; });
-      if (!parentA || !parentB || !children.length) return;
-      const sourceX = ((parentA.x + cardWidth / 2) + (parentB.x + cardWidth / 2)) / 2;
-      const sourceY = parentA.generation === parentB.generation
-        ? (parentA.y + parentB.y) / 2 + cardHeight / 2
-        : Math.max(parentA.y, parentB.y) + cardHeight;
-      const centers = children.map(function (item) { return item.node.x + cardWidth / 2; });
-      const targetY = Math.min.apply(null, children.map(function (item) { return item.node.y; }));
-      const busY = sourceY + Math.max(32, (targetY - sourceY) * 0.43);
-      const minimum = Math.min.apply(null, centers);
-      const maximum = Math.max.apply(null, centers);
-      addPath(fragment, "M " + sourceX + " " + sourceY + " V " + busY, "tree-link");
-      if (children.length > 1 || sourceX < minimum || sourceX > maximum) {
-        addPath(fragment, "M " + Math.min(sourceX, minimum) + " " + busY + " H " + Math.max(sourceX, maximum), "tree-link");
+      if (family.parentNodes.length && family.children.length) {
+        addPath(group, "M " + family.sourceX + " " + family.sourceY + " V " + family.busY, "tree-link", familyLineAttributes(family, "parent-stem"));
+        addPath(group, "M " + family.interval.start + " " + family.busY + " H " + family.interval.end, "tree-link", familyLineAttributes(family, "children-bus"));
+        family.children.forEach(function (child) {
+          const childX = child.node.x + layout.cardWidth / 2;
+          addPath(group, "M " + childX + " " + family.busY + " V " + child.node.y, parentLineClass(child.relationships), familyLineAttributes(family, "child-stem", [child.id]));
+        });
       }
-      children.forEach(function (item) {
-        const x = item.node.x + cardWidth / 2;
-        addPath(fragment, "M " + x + " " + busY + " V " + item.node.y, parentLineClass(item.relationships));
-      });
-    });
-
-    parentRelationships.forEach(function (relationship) {
-      if (handledLinks.has(relationship.fromPersonId + "|" + relationship.toPersonId)) return;
-      const parent = nodeMap.get(relationship.fromPersonId);
-      const child = nodeMap.get(relationship.toPersonId);
-      if (!parent || !child) return;
-      const sourceX = parent.x + cardWidth / 2;
-      const sourceY = parent.y + cardHeight;
-      const targetX = child.x + cardWidth / 2;
-      const middleY = sourceY + Math.max(28, (child.y - sourceY) / 2);
-      addPath(fragment, "M " + sourceX + " " + sourceY + " V " + middleY + " H " + targetX + " V " + child.y, parentLineClass([relationship]));
+      if (group.childNodes.length) fragment.appendChild(group);
     });
   }
 
@@ -489,7 +462,7 @@
     const nodeMap = new Map(layout.nodes.map(function (node) { return [node.id, node]; }));
     const personMap = new Map(persons.map(function (person) { return [person.id, person]; }));
     const fragment = document.createDocumentFragment();
-    renderConnections(fragment, nodeMap, layout.cardWidth, layout.cardHeight, relationships);
+    renderConnections(fragment, layout, persons, relationships);
     if (showGenerationLabels) appendGenerationLabels(fragment, layout);
     if (layout.disconnectedStartY) {
       const y = layout.disconnectedStartY;

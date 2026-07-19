@@ -58,7 +58,7 @@
 
   function exportGedcom(data) {
     if (!data || !data.tree || !Array.isArray(data.persons)) throw new Error("書き出す家系図が見つかりません。");
-    const lines = ["0 HEAD", "1 SOUR FAMILY_TREE_NOTE", "2 NAME 家系図ノート", "2 VERS 1.0.0-prototype.4", "1 GEDC", "2 VERS 5.5.1", "2 FORM LINEAGE-LINKED", "1 CHAR UTF-8", "1 LANG Japanese"];
+    const lines = ["0 HEAD", "1 SOUR FAMILY_TREE_NOTE", "2 NAME 家系図ノート", "2 VERS 1.0.0-prototype.4-fix.1", "1 GEDC", "2 VERS 5.5.1", "2 FORM LINEAGE-LINKED", "1 CHAR UTF-8", "1 LANG Japanese"];
     const personRefs = new Map(data.persons.map(function (person, index) { return [person.id, "@I" + (index + 1) + "@"]; }));
     const sourceRefs = new Map(data.sources.map(function (source, index) { return [source.id, "@S" + (index + 1) + "@"]; }));
     const citationsByTarget = new Map();
