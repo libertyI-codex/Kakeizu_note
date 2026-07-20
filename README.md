@@ -1,6 +1,6 @@
-# 家系図ノート Ver.1.0 試作4 修正4
+# 家系図ノート Ver.1.0 試作4 修正4 直系配置修正2
 
-内部バージョン: `1.0.0-prototype.4-fix.4`  
+内部バージョン: `1.0.0-prototype.4-fix.4-spine.2`  
 IndexedDB: `family-tree-note` / バージョン `4`  
 データスキーマ: `4`
 
@@ -23,6 +23,19 @@ python -m http.server 8000
 HTTP起動ではPWAとオフラインキャッシュを利用できます。GitHub Pagesへ配置する場合も、すべて相対パスのためサブディレクトリで動作します。
 
 初回起動時だけ、表示確認用のサンプル家族を登録します。既に人物データがある場合や、試作1〜3から移行した場合はサンプルを追加・上書きしません。
+
+## Ver.1.0 試作4 修正4 直系配置修正2
+
+### 直系縦軸を横幅圧縮より優先
+
+- 各直系人物と、その人物の親UnionNodeを結ぶ`DirectLineageRail`を描画時に生成します。基準人物の親、父方・母方祖先、さらに上の祖先へ同じ規則を再帰適用し、目標X、Union X、横ずれ、世代、ロック状態、明示的な例外理由を保持します。
+- 直系Railへ参加するUnionNode、人物、CoupleBlockをロックし、世代内の詰め直しやFamilySubtreeのcompaction対象から外しました。横幅を縮めるために直系側を動かさず、兄弟、叔父叔母、配偶者側傍系、未接続グループを左右外側へ移動します。
+- 各Railの周囲へ`SpineExclusionZone`を作り、直系人物と親UnionNodeの間へ無関係な人物カードや別familyのchildren-busを置きません。避けるための余白が必要な場合は傍系を移動し、座標を圧縮せずSVGの横幅を拡張します。左右余白は120px以上、上下余白は80px以上です。
+- 同世代で幅398pxの祖先CoupleBlockが複数あり、直下の親カード中心間隔より必要幅が大きい場合など、人物カード非重複・婚姻30px隣接・固定世代を同時に守ると完全な0px整列が幾何的に成立しないケースは、直系を重ねず安定した最小ずれへ配分し、`exceptionReason`付きで診断します。データは自動修正しません。
+- 初期表示と「基準人物へ戻る」は全体fitを行わず、基準人物を読める保存倍率で中央付近へ置きます。「全体表示」は利用者が明示した場合だけ全boundsをfitし、「100%表示」は倍率1へ戻して基準人物を中央表示します。390px画面でも人物座標自体は縮めず、キャンバス内のパン・拡大縮小で閲覧します。
+- 直系ずれ診断は0〜8pxを正常、8px超〜16pxをinfo、16px超〜32pxをwarning、32px超をerrorとします。直系CoupleBlock同士の非重複に由来する明示的な幾何制約例外は理由を残し、通常の空き領域によるずれと区別します。
+- `window.__familyTreeLayoutState`へ`directLineageRails`、`spineExclusionZones`、`lockedUnionNodeIds`、`lockedPersonIds`、`compactionMoves`、`viewBoxExpansion`、`initialViewportTarget`を公開します。通常時は大量のConsole出力を行いません。
+- 通常画面、PNG、印刷・PDFは同じ固定世代・UnionNode・FamilySubtree・SiblingGroup・CoupleBlock配置を使用します。IndexedDBはバージョン4のままで、persons、relationships、events、sources、citations、attachments、snapshots、settings、duplicateExclusionsを変更するマイグレーションはありません。
 
 ## Ver.1.0 試作4 修正4
 
@@ -48,8 +61,7 @@ HTTP起動ではPWAとオフラインキャッシュを利用できます。GitH
 - 基準人物の親UnionNodeを基準人物の真上へ優先配置し、上の祖先世代では対応する子人物の中心へ祖先CoupleBlockを順次そろえます。下の子孫世代は対応UnionNodeの下へSiblingGroup単位で寄せます。
 - CoupleBlockを分割せず、現在の婚姻・パートナーの30px隣接、兄弟順、人物カード1枚の制約を維持します。基準人物が兄弟群の中央でなくても、親UnionNodeと基準人物の縦整列を優先します。
 - 直系に含まれない兄弟、叔父叔母、配偶者側祖先等のplacement atomは、既存の左右順を保ったままスパイン外側へ配置し、傍系FamilySubtreeがスパインを横切らないようにします。
-- 初期表示は家系図全体の外接矩形ではなく`directSpine.bounds`を使います。基準人物を横中央へ置き、祖先・子孫の高さに応じて基準人物の画面内Y位置を35〜65%の範囲で調整します。
-- 診断へ`direct-line-horizontal-drift`、`ancestor-union-not-above-child`、`descendant-union-not-below-focus`、`collateral-subtree-crosses-spine`、`unused-space-with-direct-line-displacement`を追加しました。カード幅の1.5倍を超える直系ずれはwarning、空き領域がある状態で2.5倍を超えるずれはerrorです。
+- この段階の`directSpine.bounds`による自動fitと緩いずれ基準は、直系配置修正2でDirect Lineage Rail、基準人物中心表示、8／16／32pxの診断基準へ置き換えました。
 
 - 修正3の固定世代レイヤーを維持し、横配置を人物カード先行方式から`UnionNode`、`SiblingGroup`、`FamilySubtree`先行方式へ変更しました。世代、座標、UnionNode、FamilySubtreeは描画のたびにメモリ上で計算し、IndexedDBへ保存しません。
 - パートナー関係がある親2人は`union:{partner関係ID}`、共同親は`union:parents:{親ID}--{親ID}`、単独親は`union:single:{親ID}`として決定的に生成します。複数パートナーは別UnionNodeとし、人物カードは常に1枚だけです。

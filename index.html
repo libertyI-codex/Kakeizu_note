@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#557c64">
   <meta name="description" content="複数家系図、資料・引用、年表、スナップショット、GEDCOMに対応した端末内保存の家系図ノート">
-  <meta name="application-version" content="1.0.0-prototype.4-fix.4">
+  <meta name="application-version" content="1.0.0-prototype.4-fix.4-spine.2">
   <title>家系図ノート</title>
   <script>
     if (/^https?:$/.test(location.protocol)) {
@@ -70,7 +70,9 @@
         <div class="tree-toolbar" aria-label="家系図の表示操作">
           <button id="zoomOutButton" type="button" aria-label="縮小">−</button>
           <button id="zoomInButton" type="button" aria-label="拡大">＋</button>
-          <button id="centerButton" type="button" aria-label="家系図を中央に戻す"><span aria-hidden="true">◎</span><span class="toolbar-label"> 中央へ</span></button>
+          <button id="centerButton" type="button" aria-label="基準人物へ戻る" title="基準人物へ戻る"><span aria-hidden="true">◎</span><span class="toolbar-label"> 基準へ</span></button>
+          <button id="fitAllButton" type="button" aria-label="家系図全体を表示" title="家系図全体を表示"><span aria-hidden="true">⊡</span><span class="toolbar-label"> 全体</span></button>
+          <button id="resetScaleButton" type="button" aria-label="100%表示" title="100%表示"><span aria-hidden="true">1:1</span><span class="toolbar-label"> 100%</span></button>
           <button id="focusButton" type="button" aria-label="基準人物を変更"><span aria-hidden="true">♙</span><span class="toolbar-label"> 基準人物</span></button>
           <button id="viewRangeButton" type="button" aria-label="表示範囲を変更"><span aria-hidden="true">◌</span><span class="toolbar-label"> 表示範囲</span></button>
         </div>
@@ -276,7 +278,7 @@
       <section class="setting-section"><h3>データのバックアップ</h3><p>全家系図・人物・関係・写真・資料添付・表示設定を、ひとつのJSONファイルに保存します。</p><label class="field"><span>JSONの復元方法</span><select id="importMode"><option value="new">新しい家系図として復元（推奨）</option><option value="append">同じIDが存在しない場合のみ追加</option><option value="replace">現在の家系図を置き換える</option></select></label><p class="helper-text">置き換えは家系図単体バックアップのみ利用でき、実行前に自動スナップショットを作成します。</p><div class="button-row"><button id="exportButton" class="primary-button" type="button">全体JSONを書き出す</button><label class="secondary-button file-button" for="importInput">JSONから復元</label><input id="importInput" type="file" accept="application/json,.json" hidden></div></section>
       <section class="setting-section"><h3>サンプルデータ</h3><p>試作4の表示確認用データで現在の家系図を置き換えます。事前スナップショットを作成します。</p><button id="resetSampleButton" class="secondary-button" type="button">サンプルデータを再登録</button></section>
       <section class="setting-section danger-section"><h3>全データ削除</h3><p>この端末に保存した人物・関係・写真・除外情報をすべて削除します。</p><button id="deleteAllButton" class="danger-button" type="button">全データを削除</button></section>
-      <section class="setting-section app-info"><h3>アプリ情報</h3><dl><div><dt>バージョン</dt><dd>Ver.1.0 試作4 修正4</dd></div><div><dt>内部バージョン</dt><dd>1.0.0-prototype.4-fix.4</dd></div><div><dt>保存先</dt><dd>この端末のIndexedDB</dd></div><div><dt>通信</dt><dd>外部送信なし</dd></div></dl></section>
+      <section class="setting-section app-info"><h3>アプリ情報</h3><dl><div><dt>バージョン</dt><dd>Ver.1.0 試作4 修正4 直系配置修正2</dd></div><div><dt>内部バージョン</dt><dd>1.0.0-prototype.4-fix.4-spine.2</dd></div><div><dt>保存先</dt><dd>この端末のIndexedDB</dd></div><div><dt>通信</dt><dd>外部送信なし</dd></div></dl></section>
     </div>
   </dialog>
 

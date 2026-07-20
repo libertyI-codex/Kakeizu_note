@@ -29,6 +29,8 @@
     const nodeById = new Map(nodes.map(function (node) { return [node.id, node]; }));
     const directSpine = layout.directSpine || null;
     const directPersonIds = new Set(directSpine && directSpine.directPersonIds || []);
+    const lockedPersonIds = new Set(directSpine && directSpine.lockedPersonIds || []);
+    const lockedUnionNodeIds = new Set(directSpine && directSpine.lockedUnionNodeIds || []);
     const ancestorSpineTargets = new Set([directSpine && directSpine.focusPersonId].filter(Boolean).concat(directSpine && directSpine.directAncestorIds || []));
     const focusNode = directSpine ? nodeById.get(directSpine.focusPersonId) : null;
     if (layout.personById && typeof layout.personById.forEach === "function") layout.personById.forEach(function (_, personId) {
@@ -99,26 +101,14 @@
         });
         if (directSpine && directPersonIds.has(child.id)) {
           if (route.parentNodes.some(function (parent) { return parent.y >= child.node.y - EPSILON; })) add("ancestor-union-not-above-child", "error", { routeId: route.routeId, personId: child.id, unionNodeId: route.unionNodeId, familyKeys: [route.familyKey] }, "直系祖先のUnionNodeが対象人物より上にありません。");
-          if (ancestorSpineTargets.has(child.id)) {
-            const drift = Math.abs(route.unionAnchorX - (child.node.x + layout.cardWidth / 2));
-            if (drift > layout.cardWidth * 1.5) add("direct-line-horizontal-drift", "warning", { routeId: route.routeId, personId: child.id, unionNodeId: route.unionNodeId, horizontalDrift: drift, familyKeys: [route.familyKey] }, "直系UnionNodeと対象人物の横方向のずれが大きくなっています。");
-          }
         }
       });
       if (directSpine && route.parentNodes.some(function (parent) { return directPersonIds.has(parent.id); }) && route.children.some(function (child) { return directPersonIds.has(child.id); })) {
         const directParent = route.parentNodes.filter(function (parent) { return directPersonIds.has(parent.id); }).sort(function (first, second) { return Math.abs(first.generation - directSpine.focusGeneration) - Math.abs(second.generation - directSpine.focusGeneration) || stable(first.id).localeCompare(stable(second.id)); })[0];
         const directChildren = route.children.filter(function (child) { return directPersonIds.has(child.id); });
         if (directParent && directChildren.some(function (child) { return child.node.y <= directParent.y + EPSILON; })) add("descendant-union-not-below-focus", "error", { routeId: route.routeId, personId: directParent.id, unionNodeId: route.unionNodeId, familyKeys: [route.familyKey] }, "直系子孫のFamilySubtreeが基準側人物より下にありません。");
-        if (directParent) {
-          const drift = Math.abs(route.unionAnchorX - (directParent.x + layout.cardWidth / 2));
-          if (drift > layout.cardWidth * 1.5) add("direct-line-horizontal-drift", "warning", { routeId: route.routeId, personId: directParent.id, unionNodeId: route.unionNodeId, horizontalDrift: drift, familyKeys: [route.familyKey] }, "子孫へ向かう直系UnionNodeの横方向のずれが大きくなっています。");
-          if (drift > layout.cardWidth * 2.5) {
-            const layerNodes = nodes.filter(function (node) { return node.component === directParent.component && node.generation === directParent.generation; }).sort(function (first, second) { return first.x - second.x; });
-            let maximumGap = 0;
-            for (let index = 1; index < layerNodes.length; index += 1) maximumGap = Math.max(maximumGap, layerNodes[index].x - (layerNodes[index - 1].x + layout.cardWidth));
-            if (maximumGap > layout.cardWidth) add("unused-space-with-direct-line-displacement", "error", { routeId: route.routeId, personId: directParent.id, unionNodeId: route.unionNodeId, horizontalDrift: drift, familyKeys: [route.familyKey] }, "空き領域がある状態で直系UnionNodeが大きく横へずれています。");
-          }
-        }
+        /* Descendant sibling groups expand around the UnionNode. Their
+           individual card centers are not ancestor rail lock targets. */
       }
       if (route.children.length) {
         const span = route.children.map(function (child) { return child.portX; });
@@ -135,21 +125,68 @@
       }
     }
 
+    const directRails = directSpine && directSpine.directLineageRails || [];
+    const exclusionZones = directSpine && directSpine.spineExclusionZones || [];
+    directRails.forEach(function (rail) {
+      const person = nodeById.get(rail.targetPersonId);
+      const route = routes.find(function (item) { return item.unionNodeId === rail.sourceUnionNodeId && item.children.some(function (child) { return child.id === rail.targetPersonId; }); });
+      const familyKeys = route ? [route.familyKey] : [];
+      const drift = Math.abs(Number(rail.unionX) - Number(rail.targetX));
+      if (drift > 8) {
+        let severity = drift <= 16 ? "info" : (drift <= 32 ? "warning" : "error");
+        if (rail.exceptionReason && severity === "error") severity = "warning";
+        add("direct-line-horizontal-drift", severity, {
+          routeId: route && route.routeId || "", personId: rail.targetPersonId, unionNodeId: rail.sourceUnionNodeId,
+          railId: rail.id, horizontalDrift: drift, exceptionReason: rail.exceptionReason || "", familyKeys: familyKeys
+        }, rail.exceptionReason ? "隣接する直系CoupleBlockを重ねない幾何制約を優先した直系ずれです。" : "直系UnionNodeと対象人物の横ずれが新しい許容値を超えています。");
+      }
+      if (!person || !route) return;
+      if (route.unionAnchorY >= person.y - EPSILON) add("ancestor-union-not-above-child", "error", { routeId: route.routeId, personId: person.id, unionNodeId: route.unionNodeId, railId: rail.id, familyKeys: familyKeys }, "直系祖先のUnionNodeが対象人物の上にありません。");
+      const zone = exclusionZones.find(function (item) { return item.railId === rail.id; });
+      if (!zone) return;
+      const allowed = new Set(route.parentIds.concat([person.id]));
+      const intrudingCard = nodes.find(function (node) {
+        if (allowed.has(node.id)) return false;
+        return node.x < zone.maxX - EPSILON && node.x + layout.cardWidth > zone.minX + EPSILON && node.y < zone.bottomY - EPSILON && node.y + layout.cardHeight > zone.topY + EPSILON;
+      });
+      if (intrudingCard) {
+        const explicitGeometryException = Boolean(rail.exceptionReason || lockedPersonIds.has(intrudingCard.id));
+        add("ancestor-union-not-above-child", explicitGeometryException ? "warning" : "error", { routeId: route.routeId, personId: person.id, otherPersonId: intrudingCard.id, unionNodeId: route.unionNodeId, railId: rail.id, exceptionReason: explicitGeometryException ? (rail.exceptionReason || "intersecting-locked-direct-rail") : "", familyKeys: familyKeys }, explicitGeometryException ? "隣接するロック済み直系CoupleBlockとの幾何制約がRail保護領域へ重なっています。" : "直系人物と親UnionNodeの間へ無関係な人物カードが入っています。");
+      }
+      const foreignBus = busSegments.find(function (bus) {
+        if (bus.familyKey === route.familyKey || Math.abs(bus.y1 - zone.topY) < EPSILON) return false;
+        return bus.y1 > zone.topY + EPSILON && bus.y1 < zone.bottomY - EPSILON && Math.max(bus.x1, bus.x2) > zone.minX + EPSILON && Math.min(bus.x1, bus.x2) < zone.maxX - EPSILON;
+      });
+      if (foreignBus) {
+        const foreignRoute = routes.find(function (item) { return item.routeId === foreignBus.routeId; });
+        const directGeometryException = Boolean(rail.exceptionReason && foreignRoute && lockedUnionNodeIds.has(foreignRoute.unionNodeId));
+        add("collateral-subtree-crosses-spine", directGeometryException ? "warning" : "error", { routeId: route.routeId, otherRouteId: foreignBus.routeId, personId: person.id, railId: rail.id, exceptionReason: directGeometryException ? rail.exceptionReason : "", familyKeys: [route.familyKey, foreignBus.familyKey] }, directGeometryException ? "隣接するロック済み直系祖先routeがRail保護領域へ重なる幾何制約例外です。" : "別familyのchildren-busがDirect Lineage Railの保護領域を横切っています。");
+      }
+      if (drift > 32 && !rail.exceptionReason) add("unused-space-with-direct-line-displacement", "error", { routeId: route.routeId, personId: person.id, unionNodeId: route.unionNodeId, railId: rail.id, horizontalDrift: drift, familyKeys: familyKeys }, "利用可能な横空間がある状態で直系UnionNodeが32pxを超えてずれています。");
+    });
+
     const partnerPairs = new Set(relationships.filter(function (item) { return item.type === "partner"; }).reduce(function (values, item) { values.push([item.fromPersonId, item.toPersonId].sort().join("|")); return values; }, []));
     if (directSpine) {
       (layout.placementAtoms || []).forEach(function (atom) {
         if (atom.component !== (focusNode && focusNode.component) || atom.personIds.some(function (id) { return directPersonIds.has(id); })) return;
-        if (atom.x < directSpine.spineX - EPSILON && atom.x + atom.width > directSpine.spineX + EPSILON) add("collateral-subtree-crosses-spine", "warning", { placementAtomId: atom.id, personIds: atom.personIds.slice() }, "傍系FamilySubtreeが直系スパインを横切っています。");
+        const atomNodes = atom.personIds.map(function (id) { return nodeById.get(id); }).filter(Boolean);
+        const atomTop = atomNodes.length ? Math.min.apply(null, atomNodes.map(function (node) { return node.y; })) : 0;
+        const atomBottom = atomNodes.length ? Math.max.apply(null, atomNodes.map(function (node) { return node.y + layout.cardHeight; })) : 0;
+        const zone = exclusionZones.find(function (item) { return atom.x < item.maxX - EPSILON && atom.x + atom.width > item.minX + EPSILON && atomTop < item.bottomY - EPSILON && atomBottom > item.topY + EPSILON; });
+        if (zone) add("collateral-subtree-crosses-spine", "warning", { placementAtomId: atom.id, personIds: atom.personIds.slice(), railId: zone.railId }, "傍系FamilySubtreeがSpine Exclusion Zoneへ侵入しています。");
       });
     }
     (layout.siblingGroups || []).forEach(function (group) {
-      if (!group.orderedChildIds.length) return;
+      if (group.orderedChildIds.length < 2) return;
       const memberSet = new Set(group.orderedChildIds);
       const intruders = nodes.filter(function (node) { return node.generation === group.generation && node.x + layout.cardWidth / 2 > group.minX && node.x + layout.cardWidth / 2 < group.maxX && !memberSet.has(node.id); });
       if (intruders.length) {
         const spouse = intruders.find(function (node) { return group.orderedChildIds.some(function (id) { return partnerPairs.has([id, node.id].sort().join("|")); }); });
         if (spouse) add("spouse-ancestor-inside-sibling-group", "warning", { siblingGroupId: group.id, personId: spouse.id }, "配偶者側の人物が兄弟グループ内部へ入っています。");
-        else add("unrelated-person-inside-sibling-group", "error", { siblingGroupId: group.id, personId: intruders[0].id }, "兄弟グループ内へ無関係な人物が入り込んでいます。");
+        else {
+          const lockedInterleave = group.orderedChildIds.some(function (id) { return lockedPersonIds.has(id); }) || lockedPersonIds.has(intruders[0].id);
+          add("unrelated-person-inside-sibling-group", lockedInterleave ? "warning" : "error", { siblingGroupId: group.id, personId: intruders[0].id, exceptionReason: lockedInterleave ? "person-card-uniqueness-with-locked-couple" : "" }, lockedInterleave ? "人物カードを複製せずロック済みCoupleBlockを維持するため、兄弟グループに分断があります。" : "兄弟グループ内へ無関係な人物が入り込んでいます。");
+        }
       }
     });
 

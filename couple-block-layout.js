@@ -24,6 +24,7 @@
   function apply(persons, relationships, generationState, unionModel, subtreeState, options) {
     const startedAt = performance.now();
     const cardWidth = Number(options && options.cardWidth) || CARD_WIDTH;
+    const cardHeight = Number(options && options.cardHeight) || 128;
     const nodeById = subtreeState.nodeById;
     const diagnostics = [];
     const siblingMembership = new Map();
@@ -200,10 +201,11 @@
       });
     });
 
-    /* Direct-line spine --------------------------------------------------
-       The fixed generation layers stay intact. We only translate complete
-       placement atoms, so a CoupleBlock is never split and no relationship
-       data is inferred or rewritten. */
+    /* Direct-lineage rails -----------------------------------------------
+       Fixed generation layers stay intact. Complete placement atoms are
+       translated, never individual cards, so CoupleBlocks remain adjacent.
+       Direct ancestor rails are locked first; collateral atoms are then
+       moved outward. No data is inferred, persisted, or rewritten here. */
     const focusNode = nodeById.get(generationState.focusPersonId);
     const spineX = focusNode ? focusNode.x + cardWidth / 2 : 0;
     const focusGeneration = focusNode ? focusNode.generation : 0;
@@ -244,12 +246,37 @@
       if (union.parentIds.some(function (id) { return directPersonIds.has(id); }) && union.childLinks.some(function (link) { return directPersonIds.has(link.childId); })) directUnionNodeIds.add(union.id);
     });
 
-    function shiftAtom(atom, nextX) {
-      if (!atom || !Number.isFinite(nextX)) return;
+    const compactionMoves = [];
+    const lockedPersonIds = new Set(directPersonIds);
+    const lockedUnionNodeIds = new Set(directUnionNodeIds);
+    const lockedAtomIds = new Set();
+    directPersonIds.forEach(function (personId) {
+      const atom = atomByPerson.get(personId);
+      if (atom) lockedAtomIds.add(atom.id);
+    });
+    directUnionNodeIds.forEach(function (unionId) {
+      const union = unionModel.unionById.get(unionId);
+      if (!union) return;
+      union.parentIds.forEach(function (personId) {
+        lockedPersonIds.add(personId);
+        const atom = atomByPerson.get(personId);
+        if (atom) lockedAtomIds.add(atom.id);
+      });
+    });
+
+    function shiftAtom(atom, nextX, reason, allowLocked) {
+      if (!atom || !Number.isFinite(nextX)) return false;
+      if (lockedAtomIds.has(atom.id) && !allowLocked) {
+        compactionMoves.push({ targetType: "placement-atom", targetId: atom.id, fromX: atom.x, toX: atom.x, reason: reason || "compaction", blockedByDirectRail: true });
+        return false;
+      }
       const delta = nextX - atom.x;
-      if (Math.abs(delta) < 0.01) return;
+      if (Math.abs(delta) < 0.01) return true;
+      const fromX = atom.x;
       atom.personIds.forEach(function (id) { const node = nodeById.get(id); if (node) node.x += delta; });
       atom.x = nextX;
+      compactionMoves.push({ targetType: "placement-atom", targetId: atom.id, fromX: fromX, toX: nextX, reason: reason || "layout", blockedByDirectRail: false });
+      return true;
     }
     function atomCenter(atom) { return atom.x + atom.width / 2; }
     function currentUnionCenter(union) {
@@ -257,66 +284,77 @@
       return parents.length ? parents.reduce(function (sum, node) { return sum + node.x + cardWidth / 2; }, 0) / parents.length : spineX;
     }
     function layerAtoms(component, generation) { return atomsByLayer.get(component + ":" + generation) || []; }
-    function addCollateralAnchors(atoms, anchors) {
-      const clearance = 44;
-      atoms.forEach(function (atom) {
-        if (atom.personIds.some(function (id) { return directPersonIds.has(id); })) return;
-        const center = atomCenter(atom);
-        const side = center < spineX ? -1 : (center > spineX ? 1 : (atom.id.localeCompare("spine") < 0 ? -1 : 1));
-        if (side < 0 && atom.x + atom.width > spineX - clearance) anchors.set(atom.id, { x: spineX - clearance - atom.width, priority: 8, reason: "collateral-left" });
-        if (side > 0 && atom.x < spineX + clearance) anchors.set(atom.id, { x: spineX + clearance, priority: 8, reason: "collateral-right" });
+    const LOCKED_ATOM_GAP = 24;
+    const COLLATERAL_GAP = 80;
+    const RAIL_HALF_WIDTH = cardWidth * 0.6 + 24;
+
+    function resolveLockedTargets(atoms, desiredByAtom, reason) {
+      const entries = atoms.filter(function (atom) { return desiredByAtom.has(atom.id); }).map(function (atom) {
+        const values = desiredByAtom.get(atom.id);
+        return { atom: atom, desiredX: values.reduce(function (sum, value) { return sum + value; }, 0) / values.length, x: 0 };
+      }).sort(function (first, second) { return first.desiredX - second.desiredX || first.atom.id.localeCompare(second.atom.id); });
+      if (!entries.length) return;
+      entries.forEach(function (entry, index) {
+        entry.x = index ? Math.max(entry.desiredX, entries[index - 1].x + entries[index - 1].atom.width + LOCKED_ATOM_GAP) : entry.desiredX;
       });
+      const meanError = entries.reduce(function (sum, entry) { return sum + entry.x - entry.desiredX; }, 0) / entries.length;
+      entries.forEach(function (entry) { entry.x -= meanError; shiftAtom(entry.atom, entry.x, reason, true); });
     }
-    function repackAnchored(atoms, anchors) {
-      if (!atoms.length || !anchors.size) return;
-      atoms.sort(function (first, second) { return first.x - second.x || first.id.localeCompare(second.id); });
-      const anchored = atoms.filter(function (atom) { return anchors.has(atom.id); }).sort(function (first, second) {
-        const a = anchors.get(first.id); const b = anchors.get(second.id);
-        return a.priority - b.priority || Math.abs((a.x + first.width / 2) - spineX) - Math.abs((b.x + second.width / 2) - spineX) || first.id.localeCompare(second.id);
+
+    function moveCollateralOutside(atoms, generation) {
+      const locked = atoms.filter(function (atom) { return lockedAtomIds.has(atom.id); }).sort(function (first, second) { return first.x - second.x || first.id.localeCompare(second.id); });
+      if (!locked.length) return;
+      locked.forEach(function (atom) {
+        compactionMoves.push({ targetType: "placement-atom", targetId: atom.id, fromX: atom.x, toX: atom.x, reason: "direct-lineage-rail-lock", blockedByDirectRail: true });
       });
-      if (!anchored.length) return;
-      const pivot = anchored[0]; const pivotIndex = atoms.indexOf(pivot);
-      shiftAtom(pivot, anchors.get(pivot.id).x);
-      let rightBoundary = pivot.x;
-      for (let index = pivotIndex - 1; index >= 0; index -= 1) {
-        const atom = atoms[index]; const desired = anchors.has(atom.id) ? anchors.get(atom.id).x : atom.x;
-        const maximum = rightBoundary - atomGap(atom, atoms[index + 1]) - atom.width;
-        shiftAtom(atom, Math.min(desired, maximum)); rightBoundary = atom.x;
+      const protectedMin = Math.min.apply(null, locked.map(function (atom) { return atom.x; })) - RAIL_HALF_WIDTH;
+      const protectedMax = Math.max.apply(null, locked.map(function (atom) { return atom.x + atom.width; })) + RAIL_HALF_WIDTH;
+      const protectedCenter = (protectedMin + protectedMax) / 2;
+      const collateral = atoms.filter(function (atom) { return !lockedAtomIds.has(atom.id); }).sort(function (first, second) { return first.x - second.x || first.id.localeCompare(second.id); });
+      const left = []; const right = [];
+      collateral.forEach(function (atom) {
+        const side = atomCenter(atom) < protectedCenter ? -1 : (atomCenter(atom) > protectedCenter ? 1 : (atom.id.localeCompare("rail:" + generation) < 0 ? -1 : 1));
+        (side < 0 ? left : right).push(atom);
+      });
+      let leftCursor = protectedMin - COLLATERAL_GAP;
+      for (let index = left.length - 1; index >= 0; index -= 1) {
+        const atom = left[index];
+        const nextX = Math.min(atom.x, leftCursor - atom.width);
+        shiftAtom(atom, nextX, "collateral-outside-direct-rails", false);
+        leftCursor = atom.x - FAMILY_ATOM_GAP;
       }
-      let leftBoundary = pivot.x + pivot.width;
-      for (let index = pivotIndex + 1; index < atoms.length; index += 1) {
-        const atom = atoms[index]; const desired = anchors.has(atom.id) ? anchors.get(atom.id).x : atom.x;
-        const minimum = leftBoundary + atomGap(atoms[index - 1], atom);
-        shiftAtom(atom, Math.max(desired, minimum)); leftBoundary = atom.x + atom.width;
-      }
+      let rightCursor = protectedMax + COLLATERAL_GAP;
+      right.forEach(function (atom) {
+        const nextX = Math.max(atom.x, rightCursor);
+        shiftAtom(atom, nextX, "collateral-outside-direct-rails", false);
+        rightCursor = atom.x + atom.width + FAMILY_ATOM_GAP;
+      });
     }
 
     if (focusNode) {
-      const focusAtom = atomByPerson.get(focusNode.id);
       const focusLayer = layerAtoms(focusNode.component, focusGeneration);
-      const focusAnchors = new Map();
-      if (focusAtom) focusAnchors.set(focusAtom.id, { x: focusAtom.x + spineX - (focusNode.x + cardWidth / 2), priority: 0, reason: "focus" });
-      addCollateralAnchors(focusLayer, focusAnchors);
-      repackAnchored(focusLayer, focusAnchors);
+      moveCollateralOutside(focusLayer, focusGeneration);
 
       const componentGenerations = Array.from(new Set(subtreeState.nodes.filter(function (node) { return node.component === focusNode.component; }).map(function (node) { return node.generation; })));
       const upperGenerations = componentGenerations.filter(function (value) { return value > focusGeneration; }).sort(function (a, b) { return a - b; });
       upperGenerations.forEach(function (generation) {
-        const atoms = layerAtoms(focusNode.component, generation); const anchors = new Map();
-        directPersonIds.forEach(function (childId) {
+        const atoms = layerAtoms(focusNode.component, generation); const desiredByAtom = new Map();
+        Array.from(directPersonIds).sort().forEach(function (childId) {
           const child = nodeById.get(childId); const unionId = unionModel.primaryUnionByChild[childId]; const union = unionId && unionModel.unionById.get(unionId);
           if (!child || !union || union.generation !== generation || child.generation !== generation - 1) return;
           const delta = child.x + cardWidth / 2 - currentUnionCenter(union);
           Array.from(new Set(union.parentIds.map(function (id) { return atomByPerson.get(id); }).filter(Boolean))).forEach(function (atom) {
-            anchors.set(atom.id, { x: atom.x + delta, priority: 1 + generation - focusGeneration, reason: "ancestor-union:" + union.id });
+            if (!desiredByAtom.has(atom.id)) desiredByAtom.set(atom.id, []);
+            desiredByAtom.get(atom.id).push(atom.x + delta);
           });
         });
-        addCollateralAnchors(atoms, anchors); repackAnchored(atoms, anchors);
+        resolveLockedTargets(atoms, desiredByAtom, "locked-ancestor-rail");
+        moveCollateralOutside(atoms, generation);
       });
 
       const lowerGenerations = componentGenerations.filter(function (value) { return value < focusGeneration; }).sort(function (a, b) { return b - a; });
       lowerGenerations.forEach(function (generation) {
-        const atoms = layerAtoms(focusNode.component, generation); const anchors = new Map();
+        const atoms = layerAtoms(focusNode.component, generation); const desiredByAtom = new Map();
         unionModel.unionNodes.forEach(function (union) {
           if (!directUnionNodeIds.has(union.id)) return;
           const directChildren = union.childLinks.filter(function (link) { return link.isPrimary && directPersonIds.has(link.childId); }).map(function (link) { return nodeById.get(link.childId); }).filter(function (node) { return node && node.generation === generation; });
@@ -325,10 +363,12 @@
           const childMax = Math.max.apply(null, directChildren.map(function (node) { return node.x + cardWidth; }));
           const delta = currentUnionCenter(union) - (childMin + childMax) / 2;
           Array.from(new Set(directChildren.map(function (node) { return atomByPerson.get(node.id); }).filter(Boolean))).forEach(function (atom) {
-            anchors.set(atom.id, { x: atom.x + delta, priority: 2 + focusGeneration - generation, reason: "descendant-union:" + union.id });
+            if (!desiredByAtom.has(atom.id)) desiredByAtom.set(atom.id, []);
+            desiredByAtom.get(atom.id).push(atom.x + delta);
           });
         });
-        addCollateralAnchors(atoms, anchors); repackAnchored(atoms, anchors);
+        resolveLockedTargets(atoms, desiredByAtom, "locked-descendant-family");
+        moveCollateralOutside(atoms, generation);
       });
     }
 
@@ -388,18 +428,8 @@
       const unionCenterX = currentUnionCenter(union);
       const targetX = person.x + cardWidth / 2;
       const drift = Math.abs(unionCenterX - targetX);
-      const connection = { unionNodeId: union.id, personId: personId, role: role, generation: union.generation, personGeneration: person.generation, unionCenterX: unionCenterX, targetX: targetX, horizontalDrift: drift };
+      const connection = { unionNodeId: union.id, personId: personId, role: role, generation: union.generation, personGeneration: person.generation, unionCenterX: unionCenterX, targetX: targetX, horizontalDrift: drift, locked: role === "ancestor", exceptionReason: "" };
       directConnections.push(connection);
-      if (drift > cardWidth * 1.5) diagnostics.push({ type: "direct-line-horizontal-drift", severity: "warning", unionNodeId: union.id, personId: personId, horizontalDrift: drift, message: "直系UnionNodeと対象人物の横方向のずれが大きくなっています。" });
-      if (drift > cardWidth * 2.5) {
-        const atoms = layerAtoms(componentOf(personId, generationState), union.generation);
-        const layerMin = atoms.length ? Math.min.apply(null, atoms.map(function (atom) { return atom.x; })) : 0;
-        const layerMax = atoms.length ? Math.max.apply(null, atoms.map(function (atom) { return atom.x + atom.width; })) : 0;
-        const componentNodes = subtreeState.nodes.filter(function (node) { return node.component === componentOf(personId, generationState); });
-        const componentMin = componentNodes.length ? Math.min.apply(null, componentNodes.map(function (node) { return node.x; })) : layerMin;
-        const componentMax = componentNodes.length ? Math.max.apply(null, componentNodes.map(function (node) { return node.x + cardWidth; })) : layerMax;
-        if ((componentMax - componentMin) - (layerMax - layerMin) > cardWidth) diagnostics.push({ type: "unused-space-with-direct-line-displacement", severity: "error", unionNodeId: union.id, personId: personId, horizontalDrift: drift, message: "利用可能な横空間がある状態で直系が大きくずれています。" });
-      }
     }
     const ancestorSpineTargets = new Set([focusNode && focusNode.id].filter(Boolean));
     directAncestorIds.forEach(function (personId) { ancestorSpineTargets.add(personId); });
@@ -411,6 +441,58 @@
       if (!directUnionNodeIds.has(union.id)) return;
       const directParent = union.parentIds.map(function (id) { return nodeById.get(id); }).filter(function (node) { return node && directPersonIds.has(node.id); }).sort(function (first, second) { return Math.abs(first.generation - focusGeneration) - Math.abs(second.generation - focusGeneration) || stable(first.id).localeCompare(stable(second.id)); })[0];
       if (directParent && union.childLinks.some(function (link) { return directPersonIds.has(link.childId); })) addDirectConnection(union, directParent.id, "descendant");
+    });
+
+    const ancestorConnections = directConnections.filter(function (connection) { return connection.role === "ancestor"; });
+    ancestorConnections.forEach(function (connection) {
+      const union = unionModel.unionById.get(connection.unionNodeId);
+      const parentAtoms = union ? Array.from(new Set(union.parentIds.map(function (id) { return atomByPerson.get(id); }).filter(Boolean))) : [];
+      const conflicting = ancestorConnections.find(function (other) {
+        if (other === connection || other.generation !== connection.generation) return false;
+        const otherUnion = unionModel.unionById.get(other.unionNodeId);
+        const otherAtoms = otherUnion ? Array.from(new Set(otherUnion.parentIds.map(function (id) { return atomByPerson.get(id); }).filter(Boolean))) : [];
+        if (!parentAtoms.length || !otherAtoms.length || parentAtoms.some(function (atom) { return otherAtoms.includes(atom); })) return false;
+        const required = parentAtoms.reduce(function (sum, atom) { return sum + atom.width; }, 0) / parentAtoms.length / 2 + otherAtoms.reduce(function (sum, atom) { return sum + atom.width; }, 0) / otherAtoms.length / 2 + LOCKED_ATOM_GAP;
+        return Math.abs(connection.targetX - other.targetX) < required;
+      });
+      if (conflicting && connection.horizontalDrift > 16) connection.exceptionReason = "locked-couple-geometry-conflict";
+    });
+
+    const directLineageRails = ancestorConnections.map(function (connection) {
+      const person = nodeById.get(connection.personId);
+      const union = unionModel.unionById.get(connection.unionNodeId);
+      const parentNodes = union ? union.parentIds.map(function (id) { return nodeById.get(id); }).filter(Boolean) : [];
+      const sourceY = parentNodes.length ? Math.max.apply(null, parentNodes.map(function (node) { return node.y + cardHeight / 2; })) : (person ? person.y - 1 : 0);
+      const targetY = person ? person.y : sourceY;
+      return {
+        id: "direct-rail:" + connection.unionNodeId + "--" + connection.personId,
+        targetPersonId: connection.personId,
+        sourceUnionNodeId: connection.unionNodeId,
+        targetX: connection.targetX,
+        unionX: connection.unionCenterX,
+        horizontalDrift: connection.horizontalDrift,
+        generationFrom: connection.generation,
+        generationTo: connection.personGeneration,
+        sourceY: sourceY,
+        targetY: targetY,
+        isPrimary: connection.personId === (focusNode && focusNode.id) || directAncestorIds.has(connection.personId),
+        locked: true,
+        exceptionReason: connection.exceptionReason
+      };
+    }).sort(function (first, second) { return second.generationFrom - first.generationFrom || first.id.localeCompare(second.id); });
+    const spineExclusionZones = directLineageRails.map(function (rail) {
+      const minX = Math.min(rail.targetX, rail.unionX) - RAIL_HALF_WIDTH;
+      const maxX = Math.max(rail.targetX, rail.unionX) + RAIL_HALF_WIDTH;
+      return {
+        railId: rail.id,
+        centerX: rail.targetX,
+        minX: minX,
+        maxX: maxX,
+        topY: Math.min(rail.sourceY, rail.targetY),
+        bottomY: Math.max(rail.sourceY, rail.targetY),
+        sourceUnionNodeId: rail.sourceUnionNodeId,
+        targetPersonId: rail.targetPersonId
+      };
     });
     const collateralAtomIds = [];
     atomsByLayer.forEach(function (atoms) {
@@ -430,6 +512,13 @@
       directPersonIds: Array.from(directPersonIds).sort(),
       directUnionNodeIds: Array.from(directUnionNodeIds).sort(),
       directConnections: directConnections,
+      directLineageRails: directLineageRails,
+      spineExclusionZones: spineExclusionZones,
+      lockedUnionNodeIds: Array.from(lockedUnionNodeIds).sort(),
+      lockedPersonIds: Array.from(lockedPersonIds).sort(),
+      compactionMoves: compactionMoves,
+      viewBoxExpansion: null,
+      initialViewportTarget: focusNode ? { centerX: spineX, centerY: focusNode.y + cardHeight / 2, focusPersonId: focusNode.id, preferredScale: 1 } : null,
       collateralAtomIds: collateralAtomIds.sort(),
       bounds: null
     };

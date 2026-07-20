@@ -82,7 +82,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .icon-button:hover { background: var(--green-soft); }
 .header-menu { justify-self: end; }
 
-.main-content { min-height: 0; flex: 1; position: relative; display: flex; }
+.main-content { min-height: 0; flex: 1; position: relative; display: flex; overflow: hidden; }
 .tree-section { min-width: 0; flex: 1; position: relative; overflow: hidden; background: var(--ivory); }
 .tree-section::before {
   content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .42;
@@ -325,8 +325,9 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
   .privacy-notice { top: 10px; font-size: .76rem; }
   .fab { right: 14px; bottom: max(14px, env(safe-area-inset-bottom)); min-height: 54px; padding: 0; width: 54px; justify-content: center; border-radius: 17px; }
   .fab span:last-child { display: none; }
-  .tree-toolbar { left: 10px; bottom: max(12px, env(safe-area-inset-bottom)); }
-  .tree-toolbar button { min-width: 44px; min-height: 44px; padding: 0 10px; }
+  .tree-toolbar { left: 10px; right: 72px; bottom: max(12px, env(safe-area-inset-bottom)); gap: 2px; padding: 4px; overflow-x: auto; scrollbar-width: none; }
+  .tree-toolbar::-webkit-scrollbar { display: none; }
+  .tree-toolbar button { flex: 0 0 40px; min-width: 40px; min-height: 44px; padding: 0 6px; }
   .toolbar-label { display: none; }
   .detail-panel {
     position: fixed; left: 0; right: 0; bottom: 0; width: auto; height: min(82vh, 720px); max-height: calc(100% - 50px); margin: 0;

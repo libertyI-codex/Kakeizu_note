@@ -11,8 +11,8 @@
   const BASE_CORRIDOR_HEIGHT = 58;
   const TRACK_SPACING = 20;
   const PARTNER_TRACK_SPACING = 14;
-  const PADDING_X = 84;
-  const PADDING_Y = 64;
+  const PADDING_X = 120;
+  const PADDING_Y = 80;
   const DISCONNECTED_GAP = 130;
   const BUS_STUB = 9;
   const PORT_STEP = 14;
@@ -119,6 +119,10 @@
       coupleState.placementAtoms.forEach(function (atom) { atom.x += offset; });
       coupleState.directSpine.spineX += offset;
       coupleState.directSpine.directConnections.forEach(function (connection) { connection.unionCenterX += offset; connection.targetX += offset; });
+      (coupleState.directSpine.directLineageRails || []).forEach(function (rail) { rail.unionX += offset; rail.targetX += offset; });
+      (coupleState.directSpine.spineExclusionZones || []).forEach(function (zone) { zone.centerX += offset; zone.minX += offset; zone.maxX += offset; });
+      (coupleState.directSpine.compactionMoves || []).forEach(function (move) { move.fromX += offset; move.toX += offset; });
+      if (coupleState.directSpine.initialViewportTarget) coupleState.directSpine.initialViewportTarget.centerX += offset;
     }
     const layoutDiagnostics = unionModel.diagnostics.concat(subtreeState.diagnostics, coupleState.diagnostics);
     const layout = {
@@ -141,6 +145,13 @@
       coupleByUnionId: coupleState.coupleByUnionId,
       placementAtoms: coupleState.placementAtoms,
       directSpine: coupleState.directSpine,
+      directLineageRails: coupleState.directSpine.directLineageRails || [],
+      spineExclusionZones: coupleState.directSpine.spineExclusionZones || [],
+      lockedUnionNodeIds: coupleState.directSpine.lockedUnionNodeIds || [],
+      lockedPersonIds: coupleState.directSpine.lockedPersonIds || [],
+      compactionMoves: coupleState.directSpine.compactionMoves || [],
+      viewBoxExpansion: coupleState.directSpine.viewBoxExpansion || null,
+      initialViewportTarget: coupleState.directSpine.initialViewportTarget || null,
       disconnectedComponents: generationState.disconnectedComponents,
       generationDiagnostics: generationState.diagnostics,
       layoutDiagnostics: layoutDiagnostics,
@@ -275,6 +286,22 @@
       if (person) connection.targetX = person.x + CARD_WIDTH / 2;
       connection.horizontalDrift = Math.abs(connection.unionCenterX - connection.targetX);
     });
+    (spine.directLineageRails || []).forEach(function (rail) {
+      const route = directRoutes.find(function (item) { return item.unionNodeId === rail.sourceUnionNodeId; });
+      const person = layout.nodes.find(function (node) { return node.id === rail.targetPersonId; });
+      if (route) { rail.unionX = route.unionAnchorX; rail.sourceY = route.unionAnchorY; }
+      if (person) { rail.targetX = person.x + CARD_WIDTH / 2; rail.targetY = person.y; }
+      rail.horizontalDrift = Math.abs(rail.unionX - rail.targetX);
+      const zone = (spine.spineExclusionZones || []).find(function (item) { return item.railId === rail.id; });
+      if (zone) {
+        const halfWidth = CARD_WIDTH * 0.6 + 24;
+        zone.centerX = rail.targetX;
+        zone.minX = Math.min(rail.targetX, rail.unionX) - halfWidth;
+        zone.maxX = Math.max(rail.targetX, rail.unionX) + halfWidth;
+        zone.topY = Math.min(rail.sourceY, rail.targetY);
+        zone.bottomY = Math.max(rail.sourceY, rail.targetY);
+      }
+    });
     const yValues = [];
     directNodes.forEach(function (node) { yValues.push(node.y, node.y + CARD_HEIGHT); });
     directRoutes.forEach(function (route) {
@@ -287,6 +314,23 @@
     const halfWidth = CARD_WIDTH * 1.75;
     spine.bounds = { x: spine.spineX - halfWidth, y: top, width: halfWidth * 2, height: Math.max(CARD_HEIGHT + PADDING_Y * 2, bottom - top) };
     spine.axisMinY = top; spine.axisMaxY = bottom;
+    const focusNode = layout.nodes.find(function (node) { return node.id === spine.focusPersonId; });
+    if (focusNode) {
+      const focusCenterY = focusNode.y + CARD_HEIGHT / 2;
+      const parentRoutes = directRoutes.filter(function (route) { return route.children.some(function (child) { return child.id === focusNode.id; }); });
+      const childRoutes = directRoutes.filter(function (route) { return route.parentNodes.some(function (parent) { return parent.id === focusNode.id; }); });
+      const nearYs = [focusNode.y, focusNode.y + CARD_HEIGHT];
+      parentRoutes.forEach(function (route) { nearYs.push(route.parentNodes.length ? Math.min.apply(null, route.parentNodes.map(function (node) { return node.y; })) : route.unionAnchorY); });
+      childRoutes.forEach(function (route) { route.children.forEach(function (child) { nearYs.push(child.node.y + CARD_HEIGHT); }); });
+      spine.initialViewportTarget = {
+        centerX: focusNode.x + CARD_WIDTH / 2,
+        centerY: focusCenterY,
+        focusPersonId: focusNode.id,
+        preferredScale: 1,
+        nearBounds: { top: Math.min.apply(null, nearYs) - 40, bottom: Math.max.apply(null, nearYs) + 40 }
+      };
+      layout.initialViewportTarget = spine.initialViewportTarget;
+    }
   }
 
   function allocatePersonPorts(layout, routes) {
@@ -562,6 +606,13 @@
       const minY = Math.min(activeLayout.bounds.y, Math.min.apply(null, routeYs) - PADDING_Y); const maxY = Math.max(activeLayout.bounds.y + activeLayout.bounds.height, Math.max.apply(null, routeYs) + PADDING_Y);
       activeLayout.bounds = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
     }
+    const viewBoxExpansion = {
+      left: PADDING_X, right: PADDING_X, top: PADDING_Y, bottom: PADDING_Y,
+      x: activeLayout.bounds.x, y: activeLayout.bounds.y, width: activeLayout.bounds.width, height: activeLayout.bounds.height,
+      strategy: "expand-without-coordinate-compaction"
+    };
+    activeLayout.viewBoxExpansion = viewBoxExpansion;
+    if (activeLayout.directSpine) activeLayout.directSpine.viewBoxExpansion = viewBoxExpansion;
     const diagnostics = Validator.validate(activeLayout, routes, relationships, crossings);
     const diagnosticMs = performance.now() - diagnosticStartedAt;
     routes.forEach(function (route) { route.routingIssues = diagnostics.issues.filter(function (issue) { return (issue.familyKeys || []).includes(route.familyKey) || issue.routeId === route.routeId; }); });

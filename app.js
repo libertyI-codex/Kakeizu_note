@@ -39,7 +39,7 @@
     [
       "personSearch", "searchResults", "menuButton", "privacyNotice", "treeStage", "treeSvg", "treeViewport",
       "treeLoading", "treeEmpty", "treeError", "treeErrorMessage", "retryButton", "zoomOutButton", "zoomInButton",
-      "centerButton", "focusButton", "detailPanel", "detailContent", "detailBackdrop", "personDialog", "personForm",
+      "centerButton", "fitAllButton", "resetScaleButton", "focusButton", "detailPanel", "detailContent", "detailBackdrop", "personDialog", "personForm",
       "treeSection", "peopleSection", "peopleCount", "peopleSort", "peopleFilter", "personList", "issuesButton", "mobileMenuButton",
       "personDialogTitle", "personId", "photoPreview", "photoInput", "removePhotoButton", "photoCompressionNotice", "familyName", "givenName",
       "formerFamilyName", "familyNameKana", "givenNameKana", "nickname", "otherNames", "honorific", "nameMemo", "gender", "personVerificationStatus", "birthDate", "isDeceased", "deathDate",
@@ -632,8 +632,8 @@
 
   function refreshLayoutBounds(layout) {
     if (!layout.nodes.length) return;
-    const paddingX = 84;
-    const paddingY = 64;
+    const paddingX = 120;
+    const paddingY = 80;
     const segments = (layout.routes || []).reduce(function (all, route) { return all.concat(route.segments || []); }, []);
     const routeXs = segments.reduce(function (all, segment) { return all.concat([segment.x1, segment.x2]); }, []);
     const routeYs = segments.reduce(function (all, segment) { return all.concat([segment.y1, segment.y2]); }, []);
@@ -642,6 +642,12 @@
     const maxX = Math.max.apply(null, layout.nodes.map(function (node) { return node.x + layout.cardWidth; }).concat(routeXs)) + paddingX;
     const maxY = Math.max.apply(null, layout.nodes.map(function (node) { return node.y + layout.cardHeight; }).concat(routeYs)) + paddingY;
     layout.bounds = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+    layout.viewBoxExpansion = {
+      left: paddingX, right: paddingX, top: paddingY, bottom: paddingY,
+      x: minX, y: minY, width: maxX - minX, height: maxY - minY,
+      strategy: "expand-without-coordinate-compaction"
+    };
+    if (layout.directSpine) layout.directSpine.viewBoxExpansion = layout.viewBoxExpansion;
     const disconnected = layout.nodes.filter(function (node) { return node.disconnected; });
     layout.disconnectedStartY = disconnected.length ? Math.min.apply(null, disconnected.map(function (node) { return node.y; })) - 40 : 0;
   }
@@ -742,9 +748,23 @@
         directPersonIds: scene.layout.directSpine.directPersonIds.slice(),
         directUnionNodeIds: scene.layout.directSpine.directUnionNodeIds.slice(),
         directConnections: scene.layout.directSpine.directConnections.map(function (connection) { return Object.assign({}, connection); }),
+        directLineageRails: (scene.layout.directSpine.directLineageRails || []).map(function (rail) { return Object.assign({}, rail); }),
+        spineExclusionZones: (scene.layout.directSpine.spineExclusionZones || []).map(function (zone) { return Object.assign({}, zone); }),
+        lockedUnionNodeIds: (scene.layout.directSpine.lockedUnionNodeIds || []).slice(),
+        lockedPersonIds: (scene.layout.directSpine.lockedPersonIds || []).slice(),
+        compactionMoves: (scene.layout.directSpine.compactionMoves || []).map(function (move) { return Object.assign({}, move); }),
+        viewBoxExpansion: scene.layout.directSpine.viewBoxExpansion ? Object.assign({}, scene.layout.directSpine.viewBoxExpansion) : null,
+        initialViewportTarget: scene.layout.directSpine.initialViewportTarget ? Object.assign({}, scene.layout.directSpine.initialViewportTarget) : null,
         collateralAtomIds: scene.layout.directSpine.collateralAtomIds.slice(),
         bounds: scene.layout.directSpine.bounds ? Object.assign({}, scene.layout.directSpine.bounds) : null
       } : null,
+      directLineageRails: (scene.layout.directLineageRails || []).map(function (rail) { return Object.assign({}, rail); }),
+      spineExclusionZones: (scene.layout.spineExclusionZones || []).map(function (zone) { return Object.assign({}, zone); }),
+      lockedUnionNodeIds: (scene.layout.lockedUnionNodeIds || []).slice(),
+      lockedPersonIds: (scene.layout.lockedPersonIds || []).slice(),
+      compactionMoves: (scene.layout.compactionMoves || []).map(function (move) { return Object.assign({}, move); }),
+      viewBoxExpansion: scene.layout.viewBoxExpansion ? Object.assign({}, scene.layout.viewBoxExpansion) : null,
+      initialViewportTarget: scene.layout.initialViewportTarget ? Object.assign({}, scene.layout.initialViewportTarget) : null,
       siblingGroups: scene.layout.siblingGroups,
       corridors: scene.layout.routingCorridors || [],
       trackGroups: scene.layout.trackGroups || [],
@@ -771,26 +791,41 @@
     elements.treeViewport.setAttribute("transform", "translate(" + state.transform.x + " " + state.transform.y + ") scale(" + state.transform.scale + ")");
   }
 
-  function centerTree() {
+  function centerTree(options) {
     if (!state.layout || !state.layout.bounds.width) return;
     const rect = elements.treeStage.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
-    const bounds = state.layout.directSpine && state.layout.directSpine.bounds || state.layout.bounds;
-    const fitScale = Math.min(rect.width / bounds.width, (rect.height - 60) / bounds.height) * 0.91;
-    const readableScale = rect.width < 600 ? 0.76 : 0.66;
-    const scale = Math.max(0.25, Math.min(1.18, Math.max(fitScale, readableScale)));
     const focusNode = state.layout.nodes.find(function (node) { return node.id === state.layout.focusPersonId; });
-    const centerX = state.layout.directSpine && Number.isFinite(state.layout.directSpine.spineX) ? state.layout.directSpine.spineX : (focusNode ? focusNode.x + state.layout.cardWidth / 2 : bounds.x + bounds.width / 2);
-    const centerY = focusNode ? focusNode.y + state.layout.cardHeight / 2 : bounds.y + bounds.height / 2;
-    const above = Math.max(0, centerY - bounds.y);
-    const below = Math.max(0, bounds.y + bounds.height - centerY);
-    const verticalRatio = above + below ? above / (above + below) : 0.5;
-    const focusViewportY = rect.height * Math.max(0.35, Math.min(0.65, verticalRatio));
+    const target = state.layout.initialViewportTarget || state.layout.directSpine && state.layout.directSpine.initialViewportTarget || null;
+    const centerX = target && Number.isFinite(target.centerX) ? target.centerX : (focusNode ? focusNode.x + state.layout.cardWidth / 2 : state.layout.bounds.x + state.layout.bounds.width / 2);
+    const centerY = target && Number.isFinite(target.centerY) ? target.centerY : (focusNode ? focusNode.y + state.layout.cardHeight / 2 : state.layout.bounds.y + state.layout.bounds.height / 2);
+    const preserveScale = Boolean(options && options.preserveScale);
+    const currentScale = Number(state.transform.scale) || 1;
+    const scale = preserveScale ? Math.max(0.25, Math.min(2.5, currentScale)) : Math.max(0.65, Math.min(1, currentScale));
+    const focusViewportY = rect.height * 0.56;
     state.transform.scale = scale;
     state.transform.x = rect.width / 2 - centerX * scale;
     state.transform.y = focusViewportY - centerY * scale - 10;
     applyTransform();
     scheduleScaleSave();
+  }
+
+  function fitWholeTree() {
+    if (!state.layout || !state.layout.bounds.width) return;
+    const rect = elements.treeStage.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const bounds = state.layout.bounds;
+    const scale = Math.max(0.18, Math.min(1.1, Math.min(rect.width / bounds.width, (rect.height - 40) / bounds.height) * 0.92));
+    state.transform.scale = scale;
+    state.transform.x = rect.width / 2 - (bounds.x + bounds.width / 2) * scale;
+    state.transform.y = rect.height / 2 - (bounds.y + bounds.height / 2) * scale;
+    applyTransform();
+    scheduleScaleSave();
+  }
+
+  function resetTreeScale() {
+    state.transform.scale = 1;
+    centerTree({ preserveScale: true });
   }
 
   function revealPerson(personId) {
@@ -1635,6 +1670,8 @@
     elements.zoomInButton.addEventListener("click", function () { zoomAt(state.transform.scale * 1.18); });
     elements.zoomOutButton.addEventListener("click", function () { zoomAt(state.transform.scale / 1.18); });
     elements.centerButton.addEventListener("click", centerTree);
+    elements.fitAllButton.addEventListener("click", fitWholeTree);
+    elements.resetScaleButton.addEventListener("click", resetTreeScale);
     elements.focusButton.addEventListener("click", function () { renderFocusList(); elements.focusDialog.showModal(); });
     elements.viewRangeButton.addEventListener("click", openViewRangeDialog);
     elements.viewSummary.addEventListener("click", openViewRangeDialog);
@@ -2171,7 +2208,7 @@
       state.transform.scale = Number(data.settings.scale) || 1;
       renderTree();
       renderPersonList();
-      requestAnimationFrame(centerTree);
+      requestAnimationFrame(function () { centerTree({ preserveScale: true }); });
     } catch (error) { showTreeError(error); }
   }
 
@@ -2188,6 +2225,9 @@
     routingDiagnostics: function () { return state.layout ? state.layout.routingDiagnostics : null; },
     generationDiagnostics: function () { return state.layout ? state.layout.generationDiagnostics : null; },
     layoutState: function () { return globalThis.__familyTreeLayoutState || null; },
+    centerOnFocus: function () { centerTree({ preserveScale: true }); return Object.assign({}, state.transform); },
+    fitWholeTree: function () { fitWholeTree(); return Object.assign({}, state.transform); },
+    resetTreeScale: function () { resetTreeScale(); return Object.assign({}, state.transform); },
     privacySnapshot: function (mode, forceAll) {
       const view = forceAll ? getTreeViewData(true) : { persons: state.visiblePersons, relationships: state.visibleRelationships };
       return createStandaloneSvg(view, state.settings.showGenerationLabels, mode, 1).svg.outerHTML;

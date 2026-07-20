@@ -1,8 +1,8 @@
 {
   "name": "家系図ノート",
   "short_name": "家系図ノート",
-  "description": "固定世代レイヤーとUnionNode・FamilySubtreeで家族単位を明確に表示する端末内保存の家系図アプリ（Ver.1.0 試作4 修正4）",
-  "version": "1.0.0-prototype.4-fix.4",
+  "description": "Direct Lineage Railを横幅圧縮より優先し、直系祖先を縦に追える端末内保存の家系図アプリ（Ver.1.0 試作4 修正4 直系配置修正2）",
+  "version": "1.0.0-prototype.4-fix.4-spine.2",
   "lang": "ja",
   "start_url": "./index.html",
   "scope": "./",
