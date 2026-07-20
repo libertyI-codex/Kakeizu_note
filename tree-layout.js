@@ -116,6 +116,9 @@
       subtreeState.familySubtrees.forEach(function (subtree) { subtree.centerX += offset; subtree.minX += offset; subtree.maxX += offset; if (subtree.bounds) subtree.bounds.x += offset; });
       subtreeState.siblingGroups.forEach(function (group) { group.minX += offset; group.maxX += offset; group.centerX += offset; });
       coupleState.coupleBlocks.forEach(function (block) { block.centerX += offset; block.minX += offset; block.maxX += offset; });
+      coupleState.placementAtoms.forEach(function (atom) { atom.x += offset; });
+      coupleState.directSpine.spineX += offset;
+      coupleState.directSpine.directConnections.forEach(function (connection) { connection.unionCenterX += offset; connection.targetX += offset; });
     }
     const layoutDiagnostics = unionModel.diagnostics.concat(subtreeState.diagnostics, coupleState.diagnostics);
     const layout = {
@@ -136,6 +139,8 @@
       siblingGroups: subtreeState.siblingGroups,
       coupleBlocks: coupleState.coupleBlocks,
       coupleByUnionId: coupleState.coupleByUnionId,
+      placementAtoms: coupleState.placementAtoms,
+      directSpine: coupleState.directSpine,
       disconnectedComponents: generationState.disconnectedComponents,
       generationDiagnostics: generationState.diagnostics,
       layoutDiagnostics: layoutDiagnostics,
@@ -254,6 +259,34 @@
       const first = layout.nodes.find(function (node) { return component.personIds.includes(node.id); });
       return Object.assign({}, component, { localGenerationLayers: generationLayers.filter(function (layer) { return first && layer.component === first.component; }) });
     });
+  }
+
+  function updateDirectSpineBounds(layout, routes) {
+    const spine = layout.directSpine;
+    if (!spine || !spine.focusPersonId) return;
+    const directIds = new Set(spine.directPersonIds || []);
+    const directUnionIds = new Set(spine.directUnionNodeIds || []);
+    const directNodes = layout.nodes.filter(function (node) { return directIds.has(node.id); });
+    const directRoutes = routes.filter(function (route) { return directUnionIds.has(route.unionNodeId); });
+    (spine.directConnections || []).forEach(function (connection) {
+      const route = directRoutes.find(function (item) { return item.unionNodeId === connection.unionNodeId; });
+      const person = layout.nodes.find(function (node) { return node.id === connection.personId; });
+      if (route) connection.unionCenterX = route.unionAnchorX;
+      if (person) connection.targetX = person.x + CARD_WIDTH / 2;
+      connection.horizontalDrift = Math.abs(connection.unionCenterX - connection.targetX);
+    });
+    const yValues = [];
+    directNodes.forEach(function (node) { yValues.push(node.y, node.y + CARD_HEIGHT); });
+    directRoutes.forEach(function (route) {
+      if (Number.isFinite(route.unionAnchorY)) yValues.push(route.unionAnchorY);
+      if (route.children.length && Number.isFinite(route.busY)) yValues.push(route.busY);
+    });
+    if (!yValues.length) return;
+    const top = Math.min.apply(null, yValues) - PADDING_Y;
+    const bottom = Math.max.apply(null, yValues) + PADDING_Y;
+    const halfWidth = CARD_WIDTH * 1.75;
+    spine.bounds = { x: spine.spineX - halfWidth, y: top, width: halfWidth * 2, height: Math.max(CARD_HEIGHT + PADDING_Y * 2, bottom - top) };
+    spine.axisMinY = top; spine.axisMaxY = bottom;
   }
 
   function allocatePersonPorts(layout, routes) {
@@ -516,6 +549,7 @@
     const corridorById = new Map(corridors.map(function (corridor) { return [corridor.id, corridor]; }));
     const trackGroupById = new Map(allocation.trackGroups.map(function (group) { return [group.id, group]; }));
     routes.forEach(function (route) { buildRouteGeometry(route, activeLayout, corridorById.get(route.corridorId), trackGroupById.get(route.trackGroupId)); });
+    updateDirectSpineBounds(activeLayout, routes);
     const crossings = findCrossings(routes);
     const routeGenerationMs = performance.now() - routeGenerationStartedAt;
     const diagnosticStartedAt = performance.now();

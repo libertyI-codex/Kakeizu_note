@@ -27,6 +27,10 @@
       nodeIds.add(node.id);
     });
     const nodeById = new Map(nodes.map(function (node) { return [node.id, node]; }));
+    const directSpine = layout.directSpine || null;
+    const directPersonIds = new Set(directSpine && directSpine.directPersonIds || []);
+    const ancestorSpineTargets = new Set([directSpine && directSpine.focusPersonId].filter(Boolean).concat(directSpine && directSpine.directAncestorIds || []));
+    const focusNode = directSpine ? nodeById.get(directSpine.focusPersonId) : null;
     if (layout.personById && typeof layout.personById.forEach === "function") layout.personById.forEach(function (_, personId) {
       if (!nodeById.has(personId)) add("person-without-primary-position", "error", { personId: personId }, "人物の主表示位置がありません。");
     });
@@ -93,7 +97,29 @@
           const stored = relationshipById.get(item.id);
           if (!stored || stored.toPersonId !== child.id || !route.parentIds.includes(stored.fromPersonId)) add("route-data-relationship-mismatch", "error", { routeId: route.routeId, personId: child.id, familyKeys: [route.familyKey] }, "SVG経路から元のrelationshipを逆引きできません。");
         });
+        if (directSpine && directPersonIds.has(child.id)) {
+          if (route.parentNodes.some(function (parent) { return parent.y >= child.node.y - EPSILON; })) add("ancestor-union-not-above-child", "error", { routeId: route.routeId, personId: child.id, unionNodeId: route.unionNodeId, familyKeys: [route.familyKey] }, "直系祖先のUnionNodeが対象人物より上にありません。");
+          if (ancestorSpineTargets.has(child.id)) {
+            const drift = Math.abs(route.unionAnchorX - (child.node.x + layout.cardWidth / 2));
+            if (drift > layout.cardWidth * 1.5) add("direct-line-horizontal-drift", "warning", { routeId: route.routeId, personId: child.id, unionNodeId: route.unionNodeId, horizontalDrift: drift, familyKeys: [route.familyKey] }, "直系UnionNodeと対象人物の横方向のずれが大きくなっています。");
+          }
+        }
       });
+      if (directSpine && route.parentNodes.some(function (parent) { return directPersonIds.has(parent.id); }) && route.children.some(function (child) { return directPersonIds.has(child.id); })) {
+        const directParent = route.parentNodes.filter(function (parent) { return directPersonIds.has(parent.id); }).sort(function (first, second) { return Math.abs(first.generation - directSpine.focusGeneration) - Math.abs(second.generation - directSpine.focusGeneration) || stable(first.id).localeCompare(stable(second.id)); })[0];
+        const directChildren = route.children.filter(function (child) { return directPersonIds.has(child.id); });
+        if (directParent && directChildren.some(function (child) { return child.node.y <= directParent.y + EPSILON; })) add("descendant-union-not-below-focus", "error", { routeId: route.routeId, personId: directParent.id, unionNodeId: route.unionNodeId, familyKeys: [route.familyKey] }, "直系子孫のFamilySubtreeが基準側人物より下にありません。");
+        if (directParent) {
+          const drift = Math.abs(route.unionAnchorX - (directParent.x + layout.cardWidth / 2));
+          if (drift > layout.cardWidth * 1.5) add("direct-line-horizontal-drift", "warning", { routeId: route.routeId, personId: directParent.id, unionNodeId: route.unionNodeId, horizontalDrift: drift, familyKeys: [route.familyKey] }, "子孫へ向かう直系UnionNodeの横方向のずれが大きくなっています。");
+          if (drift > layout.cardWidth * 2.5) {
+            const layerNodes = nodes.filter(function (node) { return node.component === directParent.component && node.generation === directParent.generation; }).sort(function (first, second) { return first.x - second.x; });
+            let maximumGap = 0;
+            for (let index = 1; index < layerNodes.length; index += 1) maximumGap = Math.max(maximumGap, layerNodes[index].x - (layerNodes[index - 1].x + layout.cardWidth));
+            if (maximumGap > layout.cardWidth) add("unused-space-with-direct-line-displacement", "error", { routeId: route.routeId, personId: directParent.id, unionNodeId: route.unionNodeId, horizontalDrift: drift, familyKeys: [route.familyKey] }, "空き領域がある状態で直系UnionNodeが大きく横へずれています。");
+          }
+        }
+      }
       if (route.children.length) {
         const span = route.children.map(function (child) { return child.portX; });
         const minimum = Math.min.apply(null, span); const maximum = Math.max.apply(null, span);
@@ -110,6 +136,12 @@
     }
 
     const partnerPairs = new Set(relationships.filter(function (item) { return item.type === "partner"; }).reduce(function (values, item) { values.push([item.fromPersonId, item.toPersonId].sort().join("|")); return values; }, []));
+    if (directSpine) {
+      (layout.placementAtoms || []).forEach(function (atom) {
+        if (atom.component !== (focusNode && focusNode.component) || atom.personIds.some(function (id) { return directPersonIds.has(id); })) return;
+        if (atom.x < directSpine.spineX - EPSILON && atom.x + atom.width > directSpine.spineX + EPSILON) add("collateral-subtree-crosses-spine", "warning", { placementAtomId: atom.id, personIds: atom.personIds.slice() }, "傍系FamilySubtreeが直系スパインを横切っています。");
+      });
+    }
     (layout.siblingGroups || []).forEach(function (group) {
       if (!group.orderedChildIds.length) return;
       const memberSet = new Set(group.orderedChildIds);

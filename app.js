@@ -667,6 +667,18 @@
           childIds: block.childIds.slice(), adjacent: block.adjacent
         };
       }),
+      directSpine: scene.layout.directSpine ? {
+        focusPersonId: scene.layout.directSpine.focusPersonId,
+        spineX: scene.layout.directSpine.spineX,
+        focusGeneration: scene.layout.directSpine.focusGeneration,
+        directAncestorIds: scene.layout.directSpine.directAncestorIds.slice(),
+        directDescendantIds: scene.layout.directSpine.directDescendantIds.slice(),
+        directPersonIds: scene.layout.directSpine.directPersonIds.slice(),
+        directUnionNodeIds: scene.layout.directSpine.directUnionNodeIds.slice(),
+        directConnections: scene.layout.directSpine.directConnections.map(function (connection) { return Object.assign({}, connection); }),
+        collateralAtomIds: scene.layout.directSpine.collateralAtomIds.slice(),
+        bounds: scene.layout.directSpine.bounds ? Object.assign({}, scene.layout.directSpine.bounds) : null
+      } : null,
       siblingGroups: scene.layout.siblingGroups,
       corridors: scene.layout.routingCorridors || [],
       trackGroups: scene.layout.trackGroups || [],
@@ -697,16 +709,20 @@
     if (!state.layout || !state.layout.bounds.width) return;
     const rect = elements.treeStage.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
-    const bounds = state.layout.bounds;
+    const bounds = state.layout.directSpine && state.layout.directSpine.bounds || state.layout.bounds;
     const fitScale = Math.min(rect.width / bounds.width, (rect.height - 60) / bounds.height) * 0.91;
     const readableScale = rect.width < 600 ? 0.76 : 0.66;
     const scale = Math.max(0.25, Math.min(1.18, Math.max(fitScale, readableScale)));
     const focusNode = state.layout.nodes.find(function (node) { return node.id === state.layout.focusPersonId; });
-    const centerX = focusNode ? focusNode.x + state.layout.cardWidth / 2 : bounds.x + bounds.width / 2;
+    const centerX = state.layout.directSpine && Number.isFinite(state.layout.directSpine.spineX) ? state.layout.directSpine.spineX : (focusNode ? focusNode.x + state.layout.cardWidth / 2 : bounds.x + bounds.width / 2);
     const centerY = focusNode ? focusNode.y + state.layout.cardHeight / 2 : bounds.y + bounds.height / 2;
+    const above = Math.max(0, centerY - bounds.y);
+    const below = Math.max(0, bounds.y + bounds.height - centerY);
+    const verticalRatio = above + below ? above / (above + below) : 0.5;
+    const focusViewportY = rect.height * Math.max(0.35, Math.min(0.65, verticalRatio));
     state.transform.scale = scale;
     state.transform.x = rect.width / 2 - centerX * scale;
-    state.transform.y = rect.height / 2 - centerY * scale - 10;
+    state.transform.y = focusViewportY - centerY * scale - 10;
     applyTransform();
     scheduleScaleSave();
   }
