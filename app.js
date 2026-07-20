@@ -11,6 +11,7 @@
     visiblePersons: [],
     visibleRelationships: [],
     settings: null,
+    currentTree: null,
     selectedPersonId: "",
     selectedFamilyKey: "",
     layout: null,
@@ -196,6 +197,7 @@
     state.persons = data.persons;
     state.relationships = data.relationships;
     state.settings = data.settings;
+    state.currentTree = data.currentTree || null;
     state.duplicateExclusions = data.duplicateExclusions || [];
     if (state.selectedPersonId && !findPerson(state.selectedPersonId)) closeDetail();
     renderTree();
@@ -215,7 +217,13 @@
 
   function addPath(parent, d, className, attributes) {
     if (!d || /NaN/.test(d)) return null;
-    const path = svgElement("path", Object.assign({ d: d, class: className || "tree-link" }, attributes || {}));
+    const pathAttributes = Object.assign({ d: d, class: className || "tree-link" }, attributes || {});
+    if (pathAttributes["data-segment-id"] && parent.querySelectorAll) {
+      const baseSegmentId = String(pathAttributes["data-segment-id"]);
+      const duplicateCount = Array.from(parent.querySelectorAll("[data-segment-id]")).filter(function (item) { return item.getAttribute("data-segment-id") === baseSegmentId || item.getAttribute("data-segment-id").indexOf(baseSegmentId + ":part-") === 0; }).length;
+      if (duplicateCount) pathAttributes["data-segment-id"] = baseSegmentId + ":part-" + duplicateCount;
+    }
+    const path = svgElement("path", pathAttributes);
     parent.appendChild(path);
     return path;
   }
@@ -237,12 +245,24 @@
   }
 
   function familyLineAttributes(family, role, childIds) {
+    const targetChildId = childIds && childIds.length === 1 ? childIds[0] : "";
     return {
       "data-family-key": family.familyKey,
+      "data-family-subtree-id": family.familySubtreeId || "",
+      "data-union-node-id": family.unionNodeId || "",
+      "data-route-id": family.routeId,
+      "data-segment-id": family.routeId + ":" + role + (targetChildId ? ":" + targetChildId : ""),
       "data-relation-role": role,
       "data-parent-ids": family.parentIds.join(" "),
       "data-child-ids": (childIds || family.children.map(function (child) { return child.id; })).join(" "),
-      "data-family-lane": family.lane
+      "data-target-child-id": targetChildId,
+      "data-parent-generation": family.parentGeneration === null ? "unknown" : family.parentGeneration,
+      "data-child-generation": family.childGeneration === null ? "unknown" : family.childGeneration,
+      "data-corridor-id": family.corridorId || family.corridorKey || "",
+      "data-track-group-id": family.trackGroupId || "",
+      "data-track-index": Number.isFinite(family.trackIndex) ? family.trackIndex : -1,
+      "data-relationship-type": family.relationshipType || "",
+      "data-family-lane": Number.isFinite(family.trackIndex) ? family.trackIndex : -1
     };
   }
 
@@ -286,24 +306,33 @@
   function renderConnections(fragment, layout, persons, relationships) {
     const sourceRelationships = relationships || state.relationships;
     const nodeMap = new Map(layout.nodes.map(function (node) { return [node.id, node]; }));
-    const routing = Layout.routeFamilyUnits(persons, sourceRelationships, layout.nodes, layout.cardWidth, layout.cardHeight);
+    const routing = Layout.routeFamilyUnits(persons, sourceRelationships, layout.nodes, layout.cardWidth, layout.cardHeight, layout);
     const families = routing.routes;
     families.forEach(function (family) {
       const childIds = family.children.map(function (child) { return child.id; });
       const issueCodes = family.routingIssues.map(function (issue) { return issue.code; });
       const routingStatus = family.routingIssues.some(function (issue) { return issue.severity === "error"; }) ? "error" : (issueCodes.length ? "warning" : "ok");
       const group = svgElement("g", {
-        class: "tree-family-unit",
+        class: "tree-family-unit" + (family.generationConflict ? " is-generation-conflict" : ""),
         "data-family-key": family.familyKey,
+        "data-family-subtree-id": family.familySubtreeId || "",
+        "data-union-node-id": family.unionNodeId || "",
+        "data-route-id": family.routeId,
         "data-parent-ids": family.parentIds.join(" "),
         "data-child-ids": childIds.join(" "),
-        "data-family-lane": family.lane,
+        "data-parent-generation": family.parentGeneration === null ? "unknown" : family.parentGeneration,
+        "data-child-generation": family.childGeneration === null ? "unknown" : family.childGeneration,
+        "data-corridor-id": family.corridorId || family.corridorKey || "",
+        "data-track-group-id": family.trackGroupId || "",
+        "data-track-index": Number.isFinite(family.trackIndex) ? family.trackIndex : -1,
+        "data-relationship-type": family.relationshipType || "",
+        "data-family-lane": Number.isFinite(family.trackIndex) ? family.trackIndex : -1,
         "data-routing-status": routingStatus,
         "data-routing-issues": issueCodes.join(" "),
         "data-route-length": Math.round(family.routeLength || 0),
         tabindex: "0", role: "button", "aria-label": "家族線を選択"
       });
-      if (family.partnerRelationship && family.parentIds.length === 2) {
+      if (family.drawPartnerLine && family.partnerRelationship && family.parentIds.length === 2) {
         const firstParent = nodeMap.get(family.partnerRelationship.fromPersonId);
         const secondParent = nodeMap.get(family.partnerRelationship.toPersonId);
         if (firstParent && secondParent) {
@@ -311,10 +340,14 @@
         }
       }
       if (family.parentNodes.length && family.children.length) {
-        addPath(group, family.parentPathD, "tree-link", familyLineAttributes(family, "parent-stem"));
-        addPath(group, family.busPathD, "tree-link", familyLineAttributes(family, "children-bus"));
+        const routeRelationships = family.children.reduce(function (all, child) { return all.concat(child.relationships); }, []);
+        addPath(group, family.parentPathD, parentLineClass(routeRelationships), familyLineAttributes(family, "parent-stem"));
+        addPath(group, family.busPathD, parentLineClass(routeRelationships), familyLineAttributes(family, "children-bus"));
+        addPath(group, family.busPathD, "tree-interaction-hit", familyLineAttributes(family, "interaction-hit-area"));
+        group.appendChild(svgElement("circle", Object.assign({ class: "tree-union-anchor", cx: family.unionAnchorX, cy: family.unionAnchorY, r: 3.5 }, familyLineAttributes(family, "union-anchor"))));
         family.children.forEach(function (child) {
-          addPath(group, child.pathD, parentLineClass(child.relationships), familyLineAttributes(family, "child-stem", [child.id]));
+          addPath(group, child.pathD, parentLineClass(child.relationships), familyLineAttributes(family, child.role || "child-stem", [child.id]));
+          addPath(group, child.pathD, "tree-interaction-hit", familyLineAttributes(family, "interaction-hit-area", [child.id]));
         });
       }
       if (group.childNodes.length) fragment.appendChild(group);
@@ -339,10 +372,9 @@
           "data-vertical-role": crossing.verticalRole
         });
         marker.appendChild(svgElement("circle", { class: "tree-crossing-gap", cx: crossing.x, cy: crossing.y, r: 8.5 }));
-        addPath(marker, "M " + crossing.x + " " + (crossing.y - 11) + " V " + (crossing.y + 11), verticalClass + " tree-crossing-overpass", {
-          "data-relation-role": "crossing-overpass",
-          "data-family-key": crossing.verticalFamilyKey
-        });
+        const crossingAttributes = verticalFamily ? familyLineAttributes(verticalFamily, "crossing-gap", crossing.verticalChildId ? [crossing.verticalChildId] : undefined) : { "data-relation-role": "crossing-gap", "data-family-key": crossing.verticalFamilyKey };
+        crossingAttributes["data-segment-id"] = (verticalFamily && verticalFamily.routeId || "crossing") + ":crossing-gap:" + Math.round(crossing.x) + ":" + Math.round(crossing.y);
+        addPath(marker, "M " + crossing.x + " " + (crossing.y - 11) + " V " + (crossing.y + 11), verticalClass + " tree-crossing-overpass", crossingAttributes);
         crossingLayer.appendChild(marker);
       });
       fragment.appendChild(crossingLayer);
@@ -352,9 +384,11 @@
 
   function createTreeNode(node, person, cardWidth, cardHeight) {
     const group = svgElement("g", {
-      class: "tree-node" + (person.id === state.settings.focusPersonId ? " is-focus" : ""),
+      class: "tree-node" + (node.isFocus ? " is-focus" : "") + (node.hasGenerationConflict ? " has-generation-conflict" : ""),
       transform: "translate(" + node.x + " " + node.y + ")", tabindex: "0", role: "button",
-      "aria-label": fullName(person) + "の詳細を開く", "data-person-id": person.id
+      "aria-label": fullName(person) + "の詳細を開く", "data-person-id": person.id,
+      "data-generation": node.relativeGeneration === null ? "unknown" : node.relativeGeneration,
+      "data-sibling-group-id": node.siblingGroupId || ""
     });
     group.appendChild(svgElement("title", {})).textContent = fullName(person) + "、" + lifeYears(person);
     group.appendChild(svgElement("rect", { class: "tree-node-card", width: cardWidth, height: cardHeight, rx: 18, ry: 18 }));
@@ -391,7 +425,7 @@
       label.textContent = "故人";
       group.appendChild(label);
     }
-    if (person.id === state.settings.focusPersonId) {
+    if (node.isFocus) {
       group.appendChild(svgElement("rect", { class: "tree-node-focus-badge", x: 9, y: 8, width: 35, height: 19, rx: 9 }));
       const focus = svgElement("text", { class: "tree-node-focus-text", x: 26.5, y: 21 });
       focus.textContent = "基準";
@@ -453,8 +487,25 @@
     return distance;
   }
 
+  function resolveFocusPersonId(persons, relationships) {
+    const ids = new Set(persons.map(function (person) { return person.id; }));
+    if (state.settings && ids.has(state.settings.focusPersonId)) return state.settings.focusPersonId;
+    if (state.currentTree && ids.has(state.currentTree.rootPersonId)) return state.currentTree.rootPersonId;
+    const degree = new Map(persons.map(function (person) { return [person.id, 0]; }));
+    relationships.forEach(function (relationship) {
+      if (degree.has(relationship.fromPersonId)) degree.set(relationship.fromPersonId, degree.get(relationship.fromPersonId) + 1);
+      if (degree.has(relationship.toPersonId)) degree.set(relationship.toPersonId, degree.get(relationship.toPersonId) + 1);
+    });
+    const ordered = persons.slice().sort(function (first, second) {
+      return (degree.get(second.id) || 0) - (degree.get(first.id) || 0) ||
+        String(first.createdAt || "").localeCompare(String(second.createdAt || "")) ||
+        String(first.id).localeCompare(String(second.id));
+    });
+    return ordered[0] ? ordered[0].id : "";
+  }
+
   function getTreeViewData(forceAll) {
-    const focusId = state.settings.focusPersonId && findPerson(state.settings.focusPersonId) ? state.settings.focusPersonId : (state.persons[0] && state.persons[0].id);
+    const focusId = resolveFocusPersonId(state.persons, state.relationships);
     const mode = forceAll ? "all" : state.settings.treeViewMode;
     let ids;
     if (mode === "all" || !focusId) ids = new Set(state.persons.map(function (person) { return person.id; }));
@@ -472,49 +523,54 @@
     if (!forceAll && state.settings.includePartners && mode !== "all" && mode !== "kinship" && mode !== "direct") ids = addPartnersToSet(ids);
     const persons = state.persons.filter(function (person) { return ids.has(person.id); });
     const relationships = state.relationships.filter(function (relationship) { return ids.has(relationship.fromPersonId) && ids.has(relationship.toPersonId); });
-    return { persons: persons, relationships: relationships };
+    return { persons: persons, relationships: relationships, focusPersonId: focusId };
   }
 
   function generationLabel(relative) {
-    if (relative === -2) return "祖父母世代（2世代上）";
-    if (relative === -1) return "親世代（1世代上）";
+    if (relative === 3) return "+3　曽祖父母世代";
+    if (relative === 2) return "+2　祖父母世代";
+    if (relative === 1) return "+1　親世代";
     if (relative === 0) return "基準人物と同世代";
-    if (relative === 1) return "子世代（1世代下）";
-    if (relative === 2) return "孫世代（2世代下）";
-    return Math.abs(relative) + "世代" + (relative < 0 ? "上" : "下");
+    if (relative === -1) return "-1　子世代";
+    if (relative === -2) return "-2　孫世代";
+    if (relative === -3) return "-3　曾孫世代";
+    return (relative > 0 ? "+" : "") + relative + "　" + Math.abs(relative) + "世代" + (relative > 0 ? "上" : "下");
   }
 
   function appendGenerationLabels(fragment, layout) {
     if (!layout || !layout.nodes.length) return;
-    const focus = layout.nodes.find(function (node) { return node.id === state.settings.focusPersonId; });
-    const focusGeneration = focus ? focus.generation : layout.nodes[0].generation;
     const generations = new Map();
     layout.nodes.forEach(function (node) {
       if (node.disconnected) return;
       if (!generations.has(node.generation)) generations.set(node.generation, node.y);
       else generations.set(node.generation, Math.min(generations.get(node.generation), node.y));
     });
-    Array.from(generations.keys()).sort(function (a, b) { return a - b; }).forEach(function (generation) {
+    Array.from(generations.keys()).sort(function (a, b) { return b - a; }).forEach(function (generation) {
       const label = svgElement("text", { class: "tree-generation-label", x: layout.bounds.x + 14, y: generations.get(generation) - 17 });
-      label.textContent = generationLabel(generation - focusGeneration);
+      label.textContent = generationLabel(generation);
       fragment.appendChild(label);
     });
   }
 
   function refreshLayoutBounds(layout) {
     if (!layout.nodes.length) return;
-    const padding = 84;
-    const minX = Math.min.apply(null, layout.nodes.map(function (node) { return node.x; })) - padding;
-    const minY = Math.min.apply(null, layout.nodes.map(function (node) { return node.y; })) - padding;
-    const maxX = Math.max.apply(null, layout.nodes.map(function (node) { return node.x + layout.cardWidth; })) + padding;
-    const maxY = Math.max.apply(null, layout.nodes.map(function (node) { return node.y + layout.cardHeight; })) + padding;
+    const paddingX = 84;
+    const paddingY = 64;
+    const segments = (layout.routes || []).reduce(function (all, route) { return all.concat(route.segments || []); }, []);
+    const routeXs = segments.reduce(function (all, segment) { return all.concat([segment.x1, segment.x2]); }, []);
+    const routeYs = segments.reduce(function (all, segment) { return all.concat([segment.y1, segment.y2]); }, []);
+    const minX = Math.min.apply(null, layout.nodes.map(function (node) { return node.x; }).concat(routeXs)) - paddingX;
+    const minY = Math.min.apply(null, layout.nodes.map(function (node) { return node.y; }).concat(routeYs)) - paddingY;
+    const maxX = Math.max.apply(null, layout.nodes.map(function (node) { return node.x + layout.cardWidth; }).concat(routeXs)) + paddingX;
+    const maxY = Math.max.apply(null, layout.nodes.map(function (node) { return node.y + layout.cardHeight; }).concat(routeYs)) + paddingY;
     layout.bounds = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
     const disconnected = layout.nodes.filter(function (node) { return node.disconnected; });
     layout.disconnectedStartY = disconnected.length ? Math.min.apply(null, disconnected.map(function (node) { return node.y; })) - 40 : 0;
   }
 
   function createTreeScene(persons, relationships, showGenerationLabels) {
-    const layout = Layout.compute(persons, relationships, state.settings.focusPersonId);
+    const focusPersonId = resolveFocusPersonId(persons, relationships);
+    const layout = Layout.compute(persons, relationships, focusPersonId, { rootPersonId: state.currentTree && state.currentTree.rootPersonId || "" });
     const nodeMap = new Map(layout.nodes.map(function (node) { return [node.id, node]; }));
     const personMap = new Map(persons.map(function (person) { return [person.id, person]; }));
     const fragment = document.createDocumentFragment();
@@ -528,7 +584,7 @@
       const y = layout.disconnectedStartY;
       addPath(fragment, "M " + (layout.bounds.x + 25) + " " + y + " H " + (layout.bounds.x + layout.bounds.width - 25), "tree-link tree-disconnected-divider");
       const label = svgElement("text", { class: "tree-disconnected-label", x: layout.bounds.x + 32, y: y - 10 });
-      label.textContent = "ほかの家族・未接続の人物";
+      label.textContent = "基準人物との世代未確定";
       fragment.appendChild(label);
     }
     layout.nodes.forEach(function (node) { const person = personMap.get(node.id); if (person) fragment.appendChild(createTreeNode(node, person, layout.cardWidth, layout.cardHeight)); });
@@ -582,6 +638,31 @@
     elements.treeViewport.setAttribute("data-routing-issue-count", String(scene.layout.routingDiagnostics.issues.length));
     elements.treeViewport.setAttribute("data-routing-error-count", String(scene.layout.routingDiagnostics.errorCount));
     elements.treeViewport.setAttribute("data-routing-crossing-count", String(scene.layout.routingDiagnostics.crossingCount));
+    globalThis.__familyTreeDiagnostics = scene.layout.routingDiagnostics;
+    globalThis.__generationDiagnostics = scene.layout.generationDiagnostics || [];
+    globalThis.__familyTreeLayoutState = {
+      focusPersonId: scene.layout.focusPersonId,
+      personGenerations: Object.assign({}, scene.layout.personGenerations),
+      generationLayers: scene.layout.generationLayers,
+      familyBlocks: scene.layout.familyBlocks,
+      familySubtrees: scene.layout.familySubtrees || [],
+      unionNodes: scene.layout.unionNodes || [],
+      siblingGroups: scene.layout.siblingGroups,
+      corridors: scene.layout.routingCorridors || [],
+      trackGroups: scene.layout.trackGroups || [],
+      personPorts: scene.layout.personPorts || {},
+      performance: scene.layout.performance || {},
+      routes: (scene.layout.routes || []).map(function (route) {
+        return {
+          familyKey: route.familyKey, familySubtreeId: route.familySubtreeId, unionNodeId: route.unionNodeId, routeId: route.routeId, parentIds: route.parentIds,
+          childIds: route.children.map(function (child) { return child.id; }), parentGeneration: route.parentGeneration,
+          childGeneration: route.childGeneration, corridorId: route.corridorId, trackGroupId: route.trackGroupId, trackIndex: route.trackIndex,
+          relationshipType: route.relationshipType, generationConflict: route.generationConflict
+        };
+      }),
+      disconnectedComponents: scene.layout.disconnectedComponents || []
+    };
+    if (globalThis.FAMILY_TREE_DEBUG === true) console.debug("家系図レイアウト診断", globalThis.__familyTreeLayoutState, globalThis.__familyTreeDiagnostics);
     updateTreeSelectionHighlight();
     applyTransform();
   }
@@ -598,7 +679,7 @@
     const fitScale = Math.min(rect.width / bounds.width, (rect.height - 60) / bounds.height) * 0.91;
     const readableScale = rect.width < 600 ? 0.76 : 0.66;
     const scale = Math.max(0.25, Math.min(1.18, Math.max(fitScale, readableScale)));
-    const focusNode = state.layout.nodes.find(function (node) { return node.id === state.settings.focusPersonId; });
+    const focusNode = state.layout.nodes.find(function (node) { return node.id === state.layout.focusPersonId; });
     const centerX = focusNode ? focusNode.x + state.layout.cardWidth / 2 : bounds.x + bounds.width / 2;
     const centerY = focusNode ? focusNode.y + state.layout.cardHeight / 2 : bounds.y + bounds.height / 2;
     state.transform.scale = scale;
@@ -714,7 +795,7 @@
     const groups = getRelativeGroups(person.id);
     const formerName = person.formerFamilyName ? "旧姓：" + person.formerFamilyName : "";
     const nameExtras = [person.nickname ? "通称：" + person.nickname : "", person.otherNames ? "別名：" + person.otherNames : "", person.honorific ? "敬称・補足：" + person.honorific : "", person.nameMemo ? "名前の補足：" + person.nameMemo : ""].filter(Boolean);
-    const focusChip = person.id === state.settings.focusPersonId ? "<span class=\"focus-chip\">基準人物</span>" : "";
+    const focusChip = person.id === resolveFocusPersonId(state.persons, state.relationships) ? "<span class=\"focus-chip\">基準人物</span>" : "";
     const verificationChip = "<span class=\"verification-chip is-" + escapeHtml(person.verificationStatus || "unconfirmed") + "\">" + escapeHtml(verificationLabel(person.verificationStatus)) + "</span>";
     elements.detailContent.dataset.personId = person.id;
     elements.detailContent.innerHTML =
@@ -1012,8 +1093,9 @@
   }
 
   function renderFocusList() {
+    const resolvedFocusId = resolveFocusPersonId(state.persons, state.relationships);
     elements.focusPersonList.innerHTML = state.persons.slice().sort(Layout.comparePeople).map(function (person) {
-      return "<button class=\"person-pick" + (person.id === state.settings.focusPersonId ? " is-current" : "") + "\" type=\"button\" data-focus-person=\"" + escapeHtml(person.id) + "\">" + avatarHtml(person) + "<span><strong>" + escapeHtml(fullName(person)) + "</strong><small>" + escapeHtml(lifeYears(person)) + "</small></span></button>";
+      return "<button class=\"person-pick" + (person.id === resolvedFocusId ? " is-current" : "") + "\" type=\"button\" data-focus-person=\"" + escapeHtml(person.id) + "\">" + avatarHtml(person) + "<span><strong>" + escapeHtml(fullName(person)) + "</strong><small>" + escapeHtml(lifeYears(person)) + "</small></span></button>";
     }).join("") || "<p class=\"search-empty\">人物が登録されていません。</p>";
   }
 
@@ -1219,6 +1301,16 @@
     elements.treeSvg.addEventListener("click", function (event) {
       const node = event.target.closest(".tree-node");
       if (node && Date.now() >= state.suppressClickUntil) { openDetail(node.dataset.personId); return; }
+      const relationLine = event.target.closest("[data-relation-role='interaction-hit-area'], [data-relation-role='children-bus'], [data-relation-role='child-stem'], [data-relation-role='adoptive-route'], [data-relation-role='step-route']");
+      if (relationLine && Date.now() >= state.suppressClickUntil) {
+        const parentIds = (relationLine.dataset.parentIds || "").split(/\s+/).filter(Boolean);
+        const childIds = (relationLine.dataset.targetChildId || relationLine.dataset.childIds || "").split(/\s+/).filter(Boolean);
+        const personById = new Map(state.persons.map(function (person) { return [person.id, person]; }));
+        const parentNames = parentIds.map(function (id) { return fullName(personById.get(id) || { familyName: "", givenName: id }); }).join("・");
+        const childNames = childIds.map(function (id) { return fullName(personById.get(id) || { familyName: "", givenName: id }); }).join("・");
+        const typeLabel = { biological: "実親子", adoptive: "養親子", step: "継親子" }[relationLine.dataset.relationshipType] || "親子";
+        showToast("親: " + parentNames + " ／ 子: " + childNames + "（" + typeLabel + "・家族単位: " + parentNames + "）");
+      }
       const family = event.target.closest(".tree-family-unit");
       if (family && Date.now() >= state.suppressClickUntil) {
         state.selectedFamilyKey = state.selectedFamilyKey === family.dataset.familyKey ? "" : family.dataset.familyKey;
@@ -1710,8 +1802,8 @@
   function exportSvgStyles() {
     return "text{font-family:'Yu Gothic UI','Hiragino Kaku Gothic ProN',Meiryo,sans-serif}" +
       ".tree-link{fill:none;stroke:#9aab9e;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.tree-partner-link{stroke:#718c79;stroke-width:3}.tree-partner-link.is-separated{stroke-dasharray:11 8}.tree-partner-link.is-unknown{stroke:#aeb7b0;stroke-width:2}.tree-partner-marker{stroke:#61776a;stroke-width:2.4}.tree-parent-adoptive{stroke-dasharray:10 7}.tree-parent-step{stroke-width:1.6;stroke-dasharray:2 7}.tree-disconnected-divider{stroke:#c8c9bf;stroke-width:1.5;stroke-dasharray:5 7}.tree-disconnected-label{fill:#68756d;font-size:13px;font-weight:700}" +
-      ".tree-crossing-gap{fill:#f7f3e8;stroke:none}.tree-crossing-overpass{pointer-events:none}" +
-      ".tree-generation-label{fill:#557c64;font-size:13px;font-weight:700}.tree-link.is-unverified{stroke-dasharray:4 5}.tree-node-card{fill:#fffef9;stroke:#d6d5c9;stroke-width:1.5}.tree-node.is-focus .tree-node-card{stroke:#557c64;stroke-width:3}.tree-node-photo-bg{fill:#e3eee5}.tree-node-initial{fill:#3f6250;font-size:23px;font-weight:700;text-anchor:middle;dominant-baseline:central}.tree-node-name{fill:#2c3a32;font-size:16px;font-weight:700;text-anchor:middle}.tree-node-former{fill:#68756d;font-size:11px;text-anchor:middle}.tree-node-years{fill:#68756d;font-size:12px;text-anchor:middle}.tree-node-deceased{fill:#ecebe4;stroke:#d6d5c9}.tree-node-deceased-text{fill:#68756d;font-size:10px;text-anchor:middle}.tree-node-focus-badge{fill:#557c64}.tree-node-focus-text{fill:white;font-size:9px;font-weight:700;text-anchor:middle}.tree-node-verification{fill:#fff4d8;stroke:#8b7041}.tree-node-verification-text{fill:#6c5328;font-size:10px;font-weight:700;text-anchor:middle}";
+      ".tree-crossing-gap{fill:#f7f3e8;stroke:none}.tree-crossing-overpass{pointer-events:none}.tree-interaction-hit{display:none}.tree-union-anchor{fill:#f7f3e8;stroke:#557c64;stroke-width:1.8}.tree-family-unit.is-generation-conflict .tree-link{stroke:#8b7041}" +
+      ".tree-generation-label{fill:#557c64;font-size:13px;font-weight:700}.tree-link.is-unverified{stroke-dasharray:4 5}.tree-node-card{fill:#fffef9;stroke:#d6d5c9;stroke-width:1.5}.tree-node.is-focus .tree-node-card{stroke:#557c64;stroke-width:3}.tree-node.has-generation-conflict .tree-node-card{stroke:#8b7041;stroke-dasharray:5 4}.tree-node-photo-bg{fill:#e3eee5}.tree-node-initial{fill:#3f6250;font-size:23px;font-weight:700;text-anchor:middle;dominant-baseline:central}.tree-node-name{fill:#2c3a32;font-size:16px;font-weight:700;text-anchor:middle}.tree-node-former{fill:#68756d;font-size:11px;text-anchor:middle}.tree-node-years{fill:#68756d;font-size:12px;text-anchor:middle}.tree-node-deceased{fill:#ecebe4;stroke:#d6d5c9}.tree-node-deceased-text{fill:#68756d;font-size:10px;text-anchor:middle}.tree-node-focus-badge{fill:#557c64}.tree-node-focus-text{fill:white;font-size:9px;font-weight:700;text-anchor:middle}.tree-node-verification{fill:#fff4d8;stroke:#8b7041}.tree-node-verification-text{fill:#6c5328;font-size:10px;font-weight:700;text-anchor:middle}";
   }
 
   function privacyInitial(person) {
@@ -1765,6 +1857,7 @@
     svg.appendChild(svgElement("rect", { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, fill: "#f7f3e8" }));
     svg.appendChild(scene.fragment);
     applyPrivacyToSvg(svg, view.persons, privacyMode);
+    svg.querySelectorAll(".tree-interaction-hit").forEach(function (element) { element.remove(); });
     return { svg: svg, layout: scene.layout };
   }
 
@@ -1927,6 +2020,7 @@
       state.persons = data.persons;
       state.relationships = data.relationships;
       state.settings = data.settings;
+      state.currentTree = data.currentTree || null;
       state.duplicateExclusions = data.duplicateExclusions || [];
       state.transform.scale = Number(data.settings.scale) || 1;
       renderTree();
@@ -1946,6 +2040,8 @@
     getTreeViewData: function (forceAll) { return getTreeViewData(Boolean(forceAll)); },
     formatPersonDate: formatPersonDate,
     routingDiagnostics: function () { return state.layout ? state.layout.routingDiagnostics : null; },
+    generationDiagnostics: function () { return state.layout ? state.layout.generationDiagnostics : null; },
+    layoutState: function () { return globalThis.__familyTreeLayoutState || null; },
     privacySnapshot: function (mode, forceAll) {
       const view = forceAll ? getTreeViewData(true) : { persons: state.visiblePersons, relationships: state.visibleRelationships };
       return createStandaloneSvg(view, state.settings.showGenerationLabels, mode, 1).svg.outerHTML;

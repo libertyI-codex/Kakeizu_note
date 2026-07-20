@@ -274,8 +274,11 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 .tree-parent-adoptive { stroke-dasharray: 10 7; }
 .tree-parent-step { stroke-width: 1.6; stroke-dasharray: 2 7; }
 .tree-family-unit .tree-link { pointer-events: stroke; cursor: pointer; transition: opacity .16s ease, stroke-width .16s ease; }
+.tree-interaction-hit { fill: none; stroke: transparent; stroke-width: 18; pointer-events: stroke; cursor: pointer; }
+.tree-union-anchor { fill: #f7f3e8; stroke: #557c64; stroke-width: 1.8; pointer-events: none; }
 .tree-family-unit.is-selected-family .tree-link { stroke: #365f49; stroke-width: 3.4; }
 .tree-family-unit.is-dimmed { opacity: .2; }
+.tree-family-unit.is-generation-conflict .tree-link:not(.tree-interaction-hit) { stroke: #8b7041; }
 .tree-crossing-gap { fill: var(--ivory); stroke: none; }
 .tree-crossing-overpass { pointer-events: none; }
 .tree-crossing-marker.is-dimmed { opacity: .2; }
@@ -287,6 +290,7 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 .tree-node-card { fill: #fffef9; stroke: #d6d5c9; stroke-width: 1.5; filter: drop-shadow(0 4px 6px rgba(47,65,53,.12)); }
 .tree-node:hover .tree-node-card, .tree-node:focus .tree-node-card { stroke: var(--green); stroke-width: 2.5; }
 .tree-node.is-focus .tree-node-card { stroke: var(--green); stroke-width: 3; }
+.tree-node.has-generation-conflict .tree-node-card { stroke: #8b7041; stroke-dasharray: 5 4; }
 .tree-node-photo-bg { fill: var(--green-soft); }
 .tree-node-initial { fill: var(--green-dark); font-size: 23px; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
 .tree-node-name { fill: var(--ink); font-size: 16px; font-weight: 700; text-anchor: middle; }
