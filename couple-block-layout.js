@@ -287,6 +287,14 @@
     const LOCKED_ATOM_GAP = 24;
     const COLLATERAL_GAP = 80;
     const RAIL_HALF_WIDTH = cardWidth * 0.6 + 24;
+    const unionsByParent = new Map();
+    unionModel.unionNodes.forEach(function (union) {
+      union.parentIds.forEach(function (personId) {
+        if (!unionsByParent.has(personId)) unionsByParent.set(personId, []);
+        unionsByParent.get(personId).push(union);
+      });
+    });
+    unionsByParent.forEach(function (unions) { unions.sort(function (first, second) { return first.id.localeCompare(second.id); }); });
 
     function resolveLockedTargets(atoms, desiredByAtom, reason) {
       const entries = atoms.filter(function (atom) { return desiredByAtom.has(atom.id); }).map(function (atom) {
@@ -371,6 +379,122 @@
         moveCollateralOutside(atoms, generation);
       });
     }
+
+    /* Keep collateral family branches under their own UnionNode. Direct
+       rail alignment can move a CoupleBlock after FamilySubtreeLayout has
+       placed its children. Re-apply that translation to the complete primary
+       descendant branch instead of lengthening the children-bus. */
+    const familyBranchAlignments = [];
+    function primaryChildNodes(union) {
+      return union.childLinks.filter(function (link) { return link.isPrimary; }).map(function (link) { return nodeById.get(link.childId); }).filter(Boolean);
+    }
+    function collectPrimaryDescendantAtoms(startAtoms) {
+      const collected = new Map();
+      let blockedByDirectRail = false;
+      const queue = startAtoms.slice().sort(function (first, second) { return first.id.localeCompare(second.id); });
+      while (queue.length) {
+        const atom = queue.shift();
+        if (!atom || collected.has(atom.id)) continue;
+        if (lockedAtomIds.has(atom.id)) { blockedByDirectRail = true; continue; }
+        collected.set(atom.id, atom);
+        atom.personIds.slice().sort().forEach(function (personId) {
+          (unionsByParent.get(personId) || []).forEach(function (union) {
+            primaryChildNodes(union).forEach(function (child) {
+              if (unionModel.primaryUnionByChild[child.id] !== union.id) return;
+              const childAtom = atomByPerson.get(child.id);
+              if (childAtom && !collected.has(childAtom.id) && !lockedAtomIds.has(childAtom.id)) queue.push(childAtom);
+            });
+          });
+        });
+      }
+      return { atoms: Array.from(collected.values()), blockedByDirectRail: blockedByDirectRail };
+    }
+    function moveFamilyBranchOutsideCollisions(familyAtoms, parentCenter, unionId) {
+      const familyIds = new Set(familyAtoms.map(function (atom) { return atom.id; }));
+      const collides = familyAtoms.some(function (atom) {
+        return layerAtoms(atom.component, atom.generation).some(function (other) {
+          return !familyIds.has(other.id) && Math.min(atom.x + atom.width, other.x + other.width) - Math.max(atom.x, other.x) > 0.5;
+        });
+      });
+      if (!collides) return 0;
+      const side = parentCenter < spineX ? -1 : 1;
+      let outwardDelta = 0;
+      const layers = new Map();
+      familyAtoms.forEach(function (atom) {
+        const key = atom.component + ":" + atom.generation;
+        if (!layers.has(key)) layers.set(key, []);
+        layers.get(key).push(atom);
+      });
+      layers.forEach(function (branchLayer, key) {
+        const parts = key.split(":");
+        const others = layerAtoms(Number(parts[0]), Number(parts[1])).filter(function (atom) { return !familyIds.has(atom.id); });
+        if (!others.length) return;
+        const branchMin = Math.min.apply(null, branchLayer.map(function (atom) { return atom.x; }));
+        const branchMax = Math.max.apply(null, branchLayer.map(function (atom) { return atom.x + atom.width; }));
+        if (side < 0) {
+          const otherMin = Math.min.apply(null, others.map(function (atom) { return atom.x; }));
+          outwardDelta = Math.min(outwardDelta, otherMin - FAMILY_ATOM_GAP - branchMax);
+        } else {
+          const otherMax = Math.max.apply(null, others.map(function (atom) { return atom.x + atom.width; }));
+          outwardDelta = Math.max(outwardDelta, otherMax + FAMILY_ATOM_GAP - branchMin);
+        }
+      });
+      if (Math.abs(outwardDelta) < 0.5) return 0;
+      familyAtoms.forEach(function (atom) { shiftAtom(atom, atom.x + outwardDelta, "family-branch-collision-outward:" + unionId, false); });
+      return outwardDelta;
+    }
+
+    unionModel.unionNodes.slice().sort(function (first, second) {
+      return second.generation - first.generation || first.id.localeCompare(second.id);
+    }).forEach(function (union) {
+      const children = primaryChildNodes(union);
+      const parents = union.parentIds.map(function (id) { return nodeById.get(id); }).filter(Boolean);
+      if (!children.length || !parents.length || directUnionNodeIds.has(union.id)) return;
+      const childAtoms = Array.from(new Set(children.map(function (child) { return atomByPerson.get(child.id); }).filter(Boolean)));
+      const parentAtoms = Array.from(new Set(parents.map(function (parent) { return atomByPerson.get(parent.id); }).filter(Boolean)));
+      const parentCenter = currentUnionCenter(union);
+      const childMin = Math.min.apply(null, children.map(function (child) { return child.x; }));
+      const childMax = Math.max.apply(null, children.map(function (child) { return child.x + cardWidth; }));
+      const childCenter = (childMin + childMax) / 2;
+      const delta = parentCenter - childCenter;
+      const alignment = {
+        unionNodeId: union.id,
+        familyKey: union.familyKey,
+        parentIds: union.parentIds.slice(),
+        childIds: children.map(function (child) { return child.id; }).sort(),
+        parentCenterX: parentCenter,
+        previousChildrenCenterX: childCenter,
+        appliedDelta: 0,
+        outwardDelta: 0,
+        childrenCenterX: childCenter,
+        horizontalDrift: Math.abs(delta),
+        status: "already-aligned"
+      };
+      if (Math.abs(delta) < 0.5) { familyBranchAlignments.push(alignment); return; }
+      if (childAtoms.concat(parentAtoms).some(function (atom) { return lockedAtomIds.has(atom.id); })) {
+        alignment.status = "blocked-by-direct-rail";
+        familyBranchAlignments.push(alignment);
+        return;
+      }
+      const branch = collectPrimaryDescendantAtoms(childAtoms);
+      if (branch.blockedByDirectRail) {
+        alignment.status = "blocked-by-descendant-direct-rail";
+        familyBranchAlignments.push(alignment);
+        return;
+      }
+      branch.atoms.forEach(function (atom) { shiftAtom(atom, atom.x + delta, "family-branch-under-union:" + union.id, false); });
+      const familyAtoms = Array.from(new Map(parentAtoms.concat(branch.atoms).map(function (atom) { return [atom.id, atom]; })).values());
+      alignment.outwardDelta = moveFamilyBranchOutsideCollisions(familyAtoms, parentCenter, union.id);
+      const movedChildren = primaryChildNodes(union);
+      const movedMin = Math.min.apply(null, movedChildren.map(function (child) { return child.x; }));
+      const movedMax = Math.max.apply(null, movedChildren.map(function (child) { return child.x + cardWidth; }));
+      alignment.appliedDelta = delta;
+      alignment.parentCenterX = currentUnionCenter(union);
+      alignment.childrenCenterX = (movedMin + movedMax) / 2;
+      alignment.horizontalDrift = Math.abs(alignment.parentCenterX - alignment.childrenCenterX);
+      alignment.status = alignment.horizontalDrift < 0.5 ? "aligned" : "partial";
+      familyBranchAlignments.push(alignment);
+    });
 
     coupleBlocks.forEach(function (block) {
       const firstNode = nodeById.get(block.relationship.fromPersonId); const secondNode = nodeById.get(block.relationship.toPersonId);
@@ -517,6 +641,7 @@
       lockedUnionNodeIds: Array.from(lockedUnionNodeIds).sort(),
       lockedPersonIds: Array.from(lockedPersonIds).sort(),
       compactionMoves: compactionMoves,
+      familyBranchAlignments: familyBranchAlignments,
       viewBoxExpansion: null,
       initialViewportTarget: focusNode ? { centerX: spineX, centerY: focusNode.y + cardHeight / 2, focusPersonId: focusNode.id, preferredScale: 1 } : null,
       collateralAtomIds: collateralAtomIds.sort(),

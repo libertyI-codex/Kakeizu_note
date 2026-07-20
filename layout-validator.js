@@ -164,6 +164,14 @@
       }
       if (drift > 32 && !rail.exceptionReason) add("unused-space-with-direct-line-displacement", "error", { routeId: route.routeId, personId: person.id, unionNodeId: route.unionNodeId, railId: rail.id, horizontalDrift: drift, familyKeys: familyKeys }, "利用可能な横空間がある状態で直系UnionNodeが32pxを超えてずれています。");
     });
+    (layout.familyBranchAlignments || []).forEach(function (alignment) {
+      if (alignment.status === "blocked-by-direct-rail" || alignment.status === "blocked-by-descendant-direct-rail") {
+        add("family-children-not-under-union", "warning", { unionNodeId: alignment.unionNodeId, familyKeys: [alignment.familyKey], parentIds: alignment.parentIds, childIds: alignment.childIds, horizontalDrift: alignment.horizontalDrift, exceptionReason: alignment.status }, "直系Railの固定を優先したため、この傍系家族は自動移動しませんでした。");
+        return;
+      }
+      if (alignment.horizontalDrift <= 8) return;
+      add("family-children-not-under-union", alignment.horizontalDrift > 16 ? "error" : "warning", { unionNodeId: alignment.unionNodeId, familyKeys: [alignment.familyKey], parentIds: alignment.parentIds, childIds: alignment.childIds, horizontalDrift: alignment.horizontalDrift }, "子どもFamilySubtreeの中心が親UnionNodeの真下からずれています。");
+    });
 
     const partnerPairs = new Set(relationships.filter(function (item) { return item.type === "partner"; }).reduce(function (values, item) { values.push([item.fromPersonId, item.toPersonId].sort().join("|")); return values; }, []));
     if (directSpine) {
@@ -179,7 +187,9 @@
     (layout.siblingGroups || []).forEach(function (group) {
       if (group.orderedChildIds.length < 2) return;
       const memberSet = new Set(group.orderedChildIds);
-      const intruders = nodes.filter(function (node) { return node.generation === group.generation && node.x + layout.cardWidth / 2 > group.minX && node.x + layout.cardWidth / 2 < group.maxX && !memberSet.has(node.id); });
+      const firstMember = nodeById.get(group.orderedChildIds[0]);
+      const groupComponent = firstMember && firstMember.component;
+      const intruders = nodes.filter(function (node) { return node.component === groupComponent && node.generation === group.generation && node.x + layout.cardWidth / 2 > group.minX && node.x + layout.cardWidth / 2 < group.maxX && !memberSet.has(node.id); });
       if (intruders.length) {
         const spouse = intruders.find(function (node) { return group.orderedChildIds.some(function (id) { return partnerPairs.has([id, node.id].sort().join("|")); }); });
         if (spouse) add("spouse-ancestor-inside-sibling-group", "warning", { siblingGroupId: group.id, personId: spouse.id }, "配偶者側の人物が兄弟グループ内部へ入っています。");

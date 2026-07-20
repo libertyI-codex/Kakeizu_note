@@ -122,6 +122,7 @@
       (coupleState.directSpine.directLineageRails || []).forEach(function (rail) { rail.unionX += offset; rail.targetX += offset; });
       (coupleState.directSpine.spineExclusionZones || []).forEach(function (zone) { zone.centerX += offset; zone.minX += offset; zone.maxX += offset; });
       (coupleState.directSpine.compactionMoves || []).forEach(function (move) { move.fromX += offset; move.toX += offset; });
+      (coupleState.directSpine.familyBranchAlignments || []).forEach(function (alignment) { alignment.parentCenterX += offset; alignment.previousChildrenCenterX += offset; alignment.childrenCenterX += offset; });
       if (coupleState.directSpine.initialViewportTarget) coupleState.directSpine.initialViewportTarget.centerX += offset;
     }
     const layoutDiagnostics = unionModel.diagnostics.concat(subtreeState.diagnostics, coupleState.diagnostics);
@@ -150,6 +151,7 @@
       lockedUnionNodeIds: coupleState.directSpine.lockedUnionNodeIds || [],
       lockedPersonIds: coupleState.directSpine.lockedPersonIds || [],
       compactionMoves: coupleState.directSpine.compactionMoves || [],
+      familyBranchAlignments: coupleState.directSpine.familyBranchAlignments || [],
       viewBoxExpansion: coupleState.directSpine.viewBoxExpansion || null,
       initialViewportTarget: coupleState.directSpine.initialViewportTarget || null,
       disconnectedComponents: generationState.disconnectedComponents,

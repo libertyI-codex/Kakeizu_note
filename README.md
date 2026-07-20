@@ -26,6 +26,12 @@ HTTP起動ではPWAとオフラインキャッシュを利用できます。GitH
 
 ## Ver.1.0 試作4 修正4 直系配置修正2
 
+### 傍系家族の子ども配置修正
+
+- 直系Railの外側へ親CoupleBlockを移動したとき、そのfamily unitの主系統の子ども・子孫FamilySubtreeも同じX差分だけ追従させます。親だけが移動してchildren-busが長くなる状態を解消し、親UnionNodeと子ども群の中心を真上・真下へそろえます。
+- 特定の氏名には依存せず、人物カードが直系Railでロックされていない全family unitへ共通適用します。子どもが複数いる場合はSiblingGroup全体を保ったまま移動し、子どもの配偶者とその下の子孫も同じ家族枝として移動します。
+- 直系Railへ接続する人物を含む枝は移動せず、`family-children-not-under-union`診断へ例外理由を残します。人物カード、relationships、sortOrder、IndexedDBデータは変更しません。
+
 ### 直系縦軸を横幅圧縮より優先
 
 - 各直系人物と、その人物の親UnionNodeを結ぶ`DirectLineageRail`を描画時に生成します。基準人物の親、父方・母方祖先、さらに上の祖先へ同じ規則を再帰適用し、目標X、Union X、横ずれ、世代、ロック状態、明示的な例外理由を保持します。
