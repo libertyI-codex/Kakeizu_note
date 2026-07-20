@@ -4,6 +4,7 @@
   const DB = globalThis.FamilyTreeDB;
   const Layout = globalThis.TreeLayout;
   const PersonCandidates = globalThis.PersonCandidateUtils;
+  const Kinship = globalThis.KinshipCalculator;
   const SVG_NS = "http://www.w3.org/2000/svg";
   const state = {
     persons: [],
@@ -12,6 +13,8 @@
     visiblePersons: [],
     visibleRelationships: [],
     settings: null,
+    kinshipState: null,
+    kinshipFilter: "all",
     currentTree: null,
     selectedPersonId: "",
     selectedFamilyKey: "",
@@ -54,8 +57,8 @@
       "relativePersonSearch", "relativePersonResults", "quickRelationType", "quickStatusLabel", "quickStatus",
       "quickStartDate", "quickEndDate", "quickMemo", "relativeFormError", "relativeContinueButton",
       "relationshipMenuDialog", "relationshipMenuTitle", "moveRelationUpButton", "moveRelationDownButton",
-      "resetRelationOrderButton", "focusDialog", "focusPersonList", "viewRangeButton", "viewSummary", "viewRangeDialog", "viewRangeForm",
-      "treeViewMode", "kinshipDepth", "includePartners", "showGenerationLabels", "settingsDialog", "exportButton", "importInput", "importMode",
+      "resetRelationOrderButton", "focusDialog", "focusPersonList", "viewRangeButton", "viewSummary", "kinshipSummary", "kinshipLegend", "kinshipFilter", "viewRangeDialog", "viewRangeForm",
+      "treeViewMode", "kinshipDepth", "includePartners", "showGenerationLabels", "kinshipDisplayMode", "settingsDialog", "exportButton", "importInput", "importMode",
       "openPeopleButton", "openIssuesButton", "duplicateButton", "issuesDialog", "issuesContent", "duplicateDialog", "duplicateContent",
       "mergeDialog", "mergeForm", "mergeKeepChoices", "mergeFields", "mergeError", "mergeBackupButton", "mergeSubmitButton",
       "openPngButton", "pngDialog", "pngForm", "pngPrivacyMode", "savePngButton", "pngError",
@@ -110,11 +113,11 @@
   function lifeYears(person) {
     const birth = yearFromDate(person.birthDate);
     const death = person.isDeceased ? yearFromDate(person.deathDate) : "";
-    if (!birth && !death) return person.isDeceased ? "故人" : "生年 未登録";
-    const birthText = birth ? birth + (person.birthDateApproximate ? "頃" : "") : "?";
-    const deathText = death ? death + (person.deathDateApproximate ? "頃" : "") : "?";
-    if (person.isDeceased) return birthText + " — " + deathText;
-    return birth ? birthText + " —" : "生年 未登録";
+    if (!birth && !death) return person.isDeceased ? "故人" : "生年不明";
+    const birthText = birth ? birth + "年" + (person.birthDateApproximate ? "頃" : "") : "?";
+    const deathText = death ? death + "年" + (person.deathDateApproximate ? "頃" : "") : "?";
+    if (person.isDeceased) return birthText + "–" + deathText;
+    return birth ? birthText + "生" : "生年不明";
   }
 
   function formatDate(value) {
@@ -460,25 +463,75 @@
     return routing;
   }
 
+  function calculateCurrentKinship(focusPersonId) {
+    if (!Kinship) return null;
+    state.kinshipState = Kinship.calculateKinshipMap({
+      focusPersonId: focusPersonId,
+      persons: state.persons,
+      relationships: state.relationships
+    });
+    return state.kinshipState;
+  }
+
+  function kinshipFor(personId) {
+    return state.kinshipState && state.kinshipState.byPersonId ? state.kinshipState.byPersonId[personId] || null : null;
+  }
+
+  function kinshipKey(result) {
+    if (!result) return "outside";
+    if ((result.category === "blood" || result.category === "adoptive") && result.degree >= 1 && result.degree <= 6) return "degree-" + result.degree;
+    if (result.category === "self") return "self";
+    if (result.category === "spouse") return "spouse";
+    if (result.category === "affinity") return "affinity";
+    return "outside";
+  }
+
+  function kinshipCategoryLabel(result) {
+    if (!result) return "未判定";
+    return { self: "基準人物", spouse: "配偶者", blood: "血族", adoptive: "養親族", affinity: "姻族", step: "継親等", formerSpouse: "元配偶者", unrelated: "親等外", unknown: "未判定" }[result.category] || "未判定";
+  }
+
+  function kinshipDisplayParts(result) {
+    const mode = state.settings && state.settings.kinshipDisplayMode || "both";
+    return {
+      badge: mode === "label" || mode === "none" ? "" : (result ? result.displayDegree : "未判定"),
+      relationship: mode === "degree" || mode === "none" ? "" : (result ? result.relationshipLabel : "関係未判定")
+    };
+  }
+
+  function personKana(person) {
+    return ((person.familyNameKana || "") + " " + (person.givenNameKana || "")).trim();
+  }
+
   function createTreeNode(node, person, cardWidth, cardHeight) {
+    const kinship = kinshipFor(person.id);
+    const kinshipParts = kinshipDisplayParts(kinship);
+    const categoryKey = kinshipKey(kinship);
+    const statusWords = [person.verificationStatus && person.verificationStatus !== "confirmed" ? verificationLabel(person.verificationStatus) : ""].filter(Boolean);
+    const accessible = kinship && kinship.category === "self"
+      ? [fullName(person), "基準人物", person.isDeceased ? "故人" : ""].filter(Boolean).join("、")
+      : [fullName(person), kinship ? "基準人物から見て" + kinship.displayDegree : "親等未判定", kinship && kinship.relationshipLabel, person.isDeceased ? "故人" : ""].filter(Boolean).join("、");
     const group = svgElement("g", {
       class: "tree-node" + (node.isFocus ? " is-focus" : "") + (node.hasGenerationConflict ? " has-generation-conflict" : ""),
       transform: "translate(" + node.x + " " + node.y + ")", tabindex: "0", role: "button",
-      "aria-label": fullName(person) + "の詳細を開く", "data-person-id": person.id,
+      "aria-label": accessible, "data-person-id": person.id,
       "data-generation": node.relativeGeneration === null ? "unknown" : node.relativeGeneration,
-      "data-sibling-group-id": node.siblingGroupId || ""
+      "data-sibling-group-id": node.siblingGroupId || "",
+      "data-kinship-key": categoryKey,
+      "data-kinship-category": kinship ? kinship.category : "unknown",
+      "data-kinship-degree": kinship && kinship.degree !== null ? kinship.degree : ""
     });
-    group.appendChild(svgElement("title", {})).textContent = fullName(person) + "、" + lifeYears(person);
+    group.appendChild(svgElement("title", {})).textContent = accessible + "、" + lifeYears(person);
     group.appendChild(svgElement("rect", { class: "tree-node-card", width: cardWidth, height: cardHeight, rx: 18, ry: 18 }));
-    const photoX = cardWidth / 2;
-    const photoY = 32;
-    group.appendChild(svgElement("circle", { class: "tree-node-photo-bg", cx: photoX, cy: photoY, r: 22 }));
+    const photoX = 31;
+    const photoY = 57;
+    group.appendChild(svgElement("circle", { class: "tree-node-photo-bg", cx: photoX, cy: photoY, r: 21 }));
     if (person.photo) {
       const clipId = "photo-" + person.id.replace(/[^a-zA-Z0-9_-]/g, "");
       const clipPath = svgElement("clipPath", { id: clipId });
-      clipPath.appendChild(svgElement("circle", { cx: photoX, cy: photoY, r: 22 }));
+      clipPath.appendChild(svgElement("circle", { cx: photoX, cy: photoY, r: 21 }));
       group.appendChild(clipPath);
-      const image = svgElement("image", { x: photoX - 22, y: photoY - 22, width: 44, height: 44, preserveAspectRatio: "xMidYMid slice", "clip-path": "url(#" + clipId + ")" });
+      const image = svgElement("image", { x: photoX - 21, y: photoY - 21, width: 42, height: 42, preserveAspectRatio: "xMidYMid slice", "clip-path": "url(#" + clipId + ")" });
       image.setAttribute("href", person.photo);
       group.appendChild(image);
     } else {
@@ -486,28 +539,42 @@
       initial.textContent = initialOf(person);
       group.appendChild(initial);
     }
-    const name = svgElement("text", { class: "tree-node-name", x: cardWidth / 2, y: 68 });
-    name.textContent = compactText(fullName(person), 14);
+    const contentX = 119;
+    const name = svgElement("text", { class: "tree-node-name", x: contentX, y: 38 });
+    name.textContent = compactText(fullName(person), 9);
     group.appendChild(name);
-    if (person.formerFamilyName) {
-      const former = svgElement("text", { class: "tree-node-former", x: cardWidth / 2, y: 89 });
-      former.textContent = "旧姓 " + compactText(person.formerFamilyName, 9);
-      group.appendChild(former);
+    const nameNotes = [personKana(person), person.formerFamilyName ? "旧姓 " + person.formerFamilyName : ""].filter(Boolean).join("・");
+    if (nameNotes) {
+      const notes = svgElement("text", { class: "tree-node-kana", x: contentX, y: 56 });
+      notes.textContent = compactText(nameNotes, 13);
+      group.appendChild(notes);
     }
-    const years = svgElement("text", { class: "tree-node-years", x: cardWidth / 2, y: person.formerFamilyName ? 111 : 99 });
+    if (kinshipParts.relationship) {
+      const relationship = svgElement("text", { class: "tree-node-kinship-label", x: contentX, y: 78 });
+      relationship.textContent = compactText(kinshipParts.relationship, 13);
+      group.appendChild(relationship);
+    }
+    const years = svgElement("text", { class: "tree-node-years", x: contentX, y: 99 });
     years.textContent = lifeYears(person);
     group.appendChild(years);
+    if (statusWords.length) {
+      const status = svgElement("text", { class: "tree-node-status", x: contentX, y: 116 });
+      status.textContent = compactText(statusWords.join("・"), 15);
+      group.appendChild(status);
+    }
     if (person.isDeceased) {
       group.appendChild(svgElement("rect", { class: "tree-node-deceased", x: cardWidth - 41, y: 9, width: 31, height: 18, rx: 8 }));
       const label = svgElement("text", { class: "tree-node-deceased-text", x: cardWidth - 25.5, y: 21.5 });
       label.textContent = "故人";
       group.appendChild(label);
     }
-    if (node.isFocus) {
-      group.appendChild(svgElement("rect", { class: "tree-node-focus-badge", x: 9, y: 8, width: 35, height: 19, rx: 9 }));
-      const focus = svgElement("text", { class: "tree-node-focus-text", x: 26.5, y: 21 });
-      focus.textContent = "基準";
-      group.appendChild(focus);
+    const badgeText = node.isFocus ? "基準人物" : kinshipParts.badge;
+    if (badgeText) {
+      const badgeWidth = Math.min(82, Math.max(42, Array.from(badgeText).length * 9 + 12));
+      group.appendChild(svgElement("rect", { class: "tree-node-kinship-badge is-" + categoryKey, x: 7, y: 7, width: badgeWidth, height: 20, rx: 9 }));
+      const badge = svgElement("text", { class: "tree-node-kinship-badge-text is-" + categoryKey, x: 7 + badgeWidth / 2, y: 21 });
+      badge.textContent = badgeText;
+      group.appendChild(badge);
     }
     if (person.verificationStatus && person.verificationStatus !== "confirmed") {
       group.appendChild(svgElement("circle", { class: "tree-node-verification", cx: cardWidth - 14, cy: cardHeight - 14, r: 7 }));
@@ -700,6 +767,40 @@
       const involved = [marker.dataset.horizontalFamilyKey, marker.dataset.verticalFamilyKey];
       marker.classList.toggle("is-dimmed", Boolean(selectedFamilyKey && !involved.includes(selectedFamilyKey)));
     });
+    applyKinshipHighlight();
+  }
+
+  function kinshipMatchesFilter(result, filter) {
+    if (filter === "all") return true;
+    if (!result) return filter === "outside";
+    if (/^degree-[1-6]$/.test(filter)) return kinshipKey(result) === filter;
+    if (filter === "spouse") return result.category === "spouse";
+    if (filter === "affinity") return result.category === "affinity";
+    return filter === "outside" && kinshipKey(result) === "outside";
+  }
+
+  function applyKinshipHighlight() {
+    if (!elements.treeViewport) return;
+    const filter = state.kinshipFilter || "all";
+    elements.treeViewport.querySelectorAll(".tree-node").forEach(function (node) {
+      node.classList.toggle("is-kinship-dimmed", !kinshipMatchesFilter(kinshipFor(node.dataset.personId), filter));
+    });
+    elements.treeViewport.querySelectorAll(".tree-family-unit").forEach(function (group) {
+      const memberIds = (group.dataset.parentIds + " " + group.dataset.childIds).trim().split(/\s+/).filter(Boolean);
+      const matches = filter === "all" || memberIds.some(function (id) { return kinshipMatchesFilter(kinshipFor(id), filter); });
+      group.classList.toggle("is-kinship-dimmed", !matches);
+    });
+  }
+
+  function renderKinshipSummary(visibleCount) {
+    if (!elements.kinshipSummary || !state.kinshipState) return;
+    const focus = findPerson(state.kinshipState.focusPersonId);
+    const summary = state.kinshipState.summary;
+    elements.kinshipSummary.innerHTML =
+      "<strong>基準人物：" + escapeHtml(fullName(focus)) + "</strong>" +
+      "<span>親等表示：1～6親等</span><span>表示人数：" + visibleCount + "人</span>" +
+      "<span>6親等以内：" + summary.withinSix + "人</span><span>配偶者：" + summary.spouse + "人</span>" +
+      "<span>姻族：" + summary.affinity + "人</span><span>親等外・未判定：" + summary.outsideOrUnknown + "人</span>";
   }
 
   function viewModeLabel() {
@@ -711,9 +812,15 @@
     elements.treeError.hidden = true;
     elements.treeViewport.replaceChildren();
     const view = getTreeViewData(false);
+    calculateCurrentKinship(view.focusPersonId);
     state.visiblePersons = view.persons;
     state.visibleRelationships = view.relationships;
     elements.viewSummary.textContent = viewModeLabel() + "・" + view.persons.length + "人";
+    renderKinshipSummary(view.persons.length);
+    if (elements.kinshipLegend && !elements.kinshipLegend.dataset.initialized) {
+      elements.kinshipLegend.open = globalThis.matchMedia && globalThis.matchMedia("(min-width: 841px)").matches;
+      elements.kinshipLegend.dataset.initialized = "true";
+    }
     if (!view.persons.length) { state.layout = null; elements.treeEmpty.hidden = false; return; }
     elements.treeEmpty.hidden = true;
     const scene = createTreeScene(view.persons, view.relationships, state.settings.showGenerationLabels);
@@ -782,7 +889,21 @@
           partnerLinePaths: (route.partnerLinePaths || []).slice()
         };
       }),
-      disconnectedComponents: scene.layout.disconnectedComponents || []
+      disconnectedComponents: scene.layout.disconnectedComponents || [],
+      kinshipState: state.kinshipState ? {
+        focusPersonId: state.kinshipState.focusPersonId,
+        calculatedAt: state.kinshipState.calculatedAt,
+        persons: state.kinshipState.persons.map(function (item) {
+          return {
+            personId: item.personId, degree: item.degree, category: item.category, relationshipLabel: item.relationshipLabel,
+            branch: item.branch, lineageType: item.lineageType, pathPersonIds: item.pathPersonIds.slice(),
+            pathRelationshipIds: item.pathRelationshipIds.slice(), isWithinLegalRange: item.isWithinLegalRange, warnings: item.warnings.slice()
+          };
+        }),
+        summary: Object.assign({}, state.kinshipState.summary, { degrees: Object.assign({}, state.kinshipState.summary.degrees) }),
+        warnings: state.kinshipState.warnings.slice(), ambiguousPaths: state.kinshipState.ambiguousPaths.slice(),
+        performanceMs: state.kinshipState.performanceMs
+      } : null
     };
     if (globalThis.FAMILY_TREE_DEBUG === true) console.debug("家系図レイアウト診断", globalThis.__familyTreeLayoutState, globalThis.__familyTreeDiagnostics);
     updateTreeSelectionHighlight();
@@ -930,6 +1051,21 @@
     }).join("") + "</div>" + ((group === "children" || group === "partners") && items.length > 1 ? "<p class=\"relation-order-note\">メニューから表示順を変更できます。</p>" : "");
   }
 
+  function kinshipPathHtml(result) {
+    if (!result) return "<p class=\"empty-relative\">基準人物からの関係を判定できません。</p>";
+    const branch = { paternal: "父方", maternal: "母方", descendant: "子孫", sibling: "兄弟姉妹", spouseSide: "配偶者側", mixed: "複合経路", unknown: "" }[result.branch] || "";
+    const lineage = { biological: "血族", adoptive: "養親族", mixed: "血族・養親族の混合", affinity: "姻族", step: "継親等", unknown: "未判定" }[result.lineageType] || "未判定";
+    const path = result.pathPersonIds.map(function (personId, index) {
+      const person = findPerson(personId);
+      const relation = index ? (result.pathLabels[index - 1] || "関係") + "：" : "";
+      return "<li><span>" + escapeHtml(relation) + "</span><button type=\"button\" data-open-person=\"" + escapeHtml(personId) + "\">" + escapeHtml(fullName(person)) + "</button></li>";
+    }).join("");
+    const warnings = result.warnings.length ? "<div class=\"kinship-path-warning\"><strong>判定上の注意</strong><ul>" + result.warnings.map(function (warning) { return "<li>" + escapeHtml(warning) + "</li>"; }).join("") + "</ul></div>" : "";
+    return "<div class=\"kinship-detail-summary\"><span class=\"kinship-detail-degree\">" + escapeHtml(result.displayDegree) + "</span><strong>" + escapeHtml(result.relationshipLabel) + "</strong>" +
+      "<small>" + escapeHtml([lineage, branch].filter(Boolean).join("・")) + "</small></div>" +
+      "<ol class=\"kinship-path-list\">" + path + "</ol>" + warnings;
+  }
+
   function renderDetail() {
     const person = findPerson(state.selectedPersonId);
     if (!person) return;
@@ -946,6 +1082,7 @@
       (person.nickname ? "<p class=\"nickname\">「" + escapeHtml(person.nickname) + "」</p>" : "") +
       (person.isDeceased ? "<span class=\"deceased-chip\">故人</span>" : "") + focusChip + verificationChip + "</section>" +
       "<div class=\"detail-actions\"><button class=\"primary-button add-relative-primary\" type=\"button\" data-add-relative>親族を追加</button><button class=\"secondary-button\" type=\"button\" data-edit-person>人物を編集</button><button class=\"secondary-button\" type=\"button\" data-add-relation>既存人物と関係を追加</button></div>" +
+      "<section class=\"detail-section kinship-detail-section\"><h3>基準人物からの関係経路</h3>" + kinshipPathHtml(kinshipFor(person.id)) + "</section>" +
       "<section class=\"detail-section\"><h3>基本情報</h3><dl class=\"detail-list\">" +
       "<div><dt>生年月日</dt><dd>" + escapeHtml(formatPersonDate(person, "birth", "生年不明")) + "</dd></div>" +
       (person.isDeceased || person.deathDate ? "<div><dt>没年月日</dt><dd>" + escapeHtml(formatPersonDate(person, "death", "没年不明")) + "</dd></div>" : "") +
@@ -1578,6 +1715,7 @@
     elements.kinshipDepth.value = state.settings.kinshipDepth;
     elements.includePartners.checked = state.settings.includePartners;
     elements.showGenerationLabels.checked = state.settings.showGenerationLabels;
+    elements.kinshipDisplayMode.value = state.settings.kinshipDisplayMode || "both";
     updateKinshipField();
     elements.viewRangeDialog.showModal();
   }
@@ -1589,7 +1727,8 @@
         treeViewMode: elements.treeViewMode.value,
         kinshipDepth: elements.kinshipDepth.value,
         includePartners: elements.includePartners.checked,
-        showGenerationLabels: elements.showGenerationLabels.checked
+        showGenerationLabels: elements.showGenerationLabels.checked,
+        kinshipDisplayMode: elements.kinshipDisplayMode.value
       });
       elements.viewRangeDialog.close();
       renderTree();
@@ -1678,6 +1817,10 @@
     elements.viewRangeButton.addEventListener("click", openViewRangeDialog);
     elements.viewSummary.addEventListener("click", openViewRangeDialog);
     elements.treeViewMode.addEventListener("change", updateKinshipField);
+    elements.kinshipFilter.addEventListener("change", function () {
+      state.kinshipFilter = elements.kinshipFilter.value || "all";
+      applyKinshipHighlight();
+    });
     elements.retryButton.addEventListener("click", bootData);
     elements.privacyNotice.querySelector("[data-dismiss-notice]").addEventListener("click", function () { elements.privacyNotice.hidden = true; });
     elements.personSearch.addEventListener("input", function () { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(function () { renderSearchResults(); renderPersonList(); }, 140); });
@@ -1988,7 +2131,7 @@
     return "text{font-family:'Yu Gothic UI','Hiragino Kaku Gothic ProN',Meiryo,sans-serif}" +
       ".tree-link{fill:none;stroke:#9aab9e;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.tree-partner-link{stroke:#718c79;stroke-width:1.8}.tree-partner-link.is-separated{stroke-dasharray:11 8}.tree-partner-link.is-unknown{stroke:#aeb7b0;stroke-width:1.5;opacity:.82}.tree-partner-marker{stroke:#61776a;stroke-width:2.4}.tree-partner-marker.is-ended{stroke-width:2}.tree-parent-adoptive{stroke-dasharray:10 7}.tree-parent-step{stroke-width:1.6;stroke-dasharray:2 7}.tree-disconnected-divider{stroke:#c8c9bf;stroke-width:1.5;stroke-dasharray:5 7}.tree-disconnected-label{fill:#68756d;font-size:13px;font-weight:700}" +
       ".tree-crossing-gap{fill:#f7f3e8;stroke:none}.tree-crossing-overpass{pointer-events:none}.tree-interaction-hit{display:none}.tree-union-anchor{fill:#f7f3e8;stroke:#557c64;stroke-width:1.8}.tree-family-unit.is-generation-conflict .tree-link{stroke:#8b7041}" +
-      ".tree-generation-label{fill:#557c64;font-size:13px;font-weight:700}.tree-link.is-unverified{stroke-dasharray:4 5}.tree-node-card{fill:#fffef9;stroke:#d6d5c9;stroke-width:1.5}.tree-node.is-focus .tree-node-card{stroke:#557c64;stroke-width:3}.tree-node.has-generation-conflict .tree-node-card{stroke:#8b7041;stroke-dasharray:5 4}.tree-node-photo-bg{fill:#e3eee5}.tree-node-initial{fill:#3f6250;font-size:23px;font-weight:700;text-anchor:middle;dominant-baseline:central}.tree-node-name{fill:#2c3a32;font-size:16px;font-weight:700;text-anchor:middle}.tree-node-former{fill:#68756d;font-size:11px;text-anchor:middle}.tree-node-years{fill:#68756d;font-size:12px;text-anchor:middle}.tree-node-deceased{fill:#ecebe4;stroke:#d6d5c9}.tree-node-deceased-text{fill:#68756d;font-size:10px;text-anchor:middle}.tree-node-focus-badge{fill:#557c64}.tree-node-focus-text{fill:white;font-size:9px;font-weight:700;text-anchor:middle}.tree-node-verification{fill:#fff4d8;stroke:#8b7041}.tree-node-verification-text{fill:#6c5328;font-size:10px;font-weight:700;text-anchor:middle}";
+      ".tree-generation-label{fill:#557c64;font-size:13px;font-weight:700}.tree-link.is-unverified{stroke-dasharray:4 5}.tree-node-card{fill:#fffef9;stroke:#d6d5c9;stroke-width:1.5}.tree-node.is-focus .tree-node-card{stroke:#557c64;stroke-width:3}.tree-node.has-generation-conflict .tree-node-card{stroke:#8b7041;stroke-dasharray:5 4}.tree-node-photo-bg{fill:#e3eee5}.tree-node-initial{fill:#3f6250;font-size:23px;font-weight:700;text-anchor:middle;dominant-baseline:central}.tree-node-name{fill:#2c3a32;font-size:16.5px;font-weight:800;text-anchor:middle}.tree-node-kana{fill:#68756d;font-size:9.5px;text-anchor:middle}.tree-node-kinship-label{fill:#3f6250;font-size:11px;font-weight:700;text-anchor:middle}.tree-node-years{fill:#68756d;font-size:11px;text-anchor:middle}.tree-node-status{fill:#68756d;font-size:9.5px;text-anchor:middle}.tree-node-deceased{fill:#ecebe4;stroke:#d6d5c9}.tree-node-deceased-text{fill:#68756d;font-size:10px;text-anchor:middle}.tree-node-kinship-badge{fill:#edf3ed;stroke:#b7c7ba}.tree-node-kinship-badge.is-self{fill:#557c64;stroke:#3f6250}.tree-node-kinship-badge.is-spouse{fill:#f1eee5;stroke:#b8aa88}.tree-node-kinship-badge.is-affinity{fill:#edf0f5;stroke:#aab5c4}.tree-node-kinship-badge.is-outside{fill:#f1efeb;stroke:#c5c0b6}.tree-node-kinship-badge-text{fill:#3f6250;font-size:9px;font-weight:800;text-anchor:middle}.tree-node-kinship-badge-text.is-self{fill:white}.tree-node-kinship-badge-text.is-spouse{fill:#6c5b37}.tree-node-kinship-badge-text.is-affinity{fill:#4d6077}.tree-node-kinship-badge-text.is-outside{fill:#6d6961}.tree-node-verification{fill:#fff4d8;stroke:#8b7041}.tree-node-verification-text{fill:#6c5328;font-size:10px;font-weight:700;text-anchor:middle}";
   }
 
   function privacyInitial(person) {
@@ -2011,7 +2154,7 @@
       if (mode === "hide-photo-dates" || mode === "initials") {
         node.querySelectorAll("image").forEach(function (image) { image.remove(); });
         if (!node.querySelector(".tree-node-initial")) {
-          const initial = svgElement("text", { class: "tree-node-initial", x: state.layout ? state.layout.cardWidth / 2 : 92, y: 32 });
+          const initial = svgElement("text", { class: "tree-node-initial", x: 31, y: 57 });
           initial.textContent = privacyInitial(person);
           node.appendChild(initial);
         }
@@ -2019,8 +2162,8 @@
       if (mode === "initials") {
         const name = node.querySelector(".tree-node-name");
         if (name) name.textContent = privacyInitial(person);
-        const former = node.querySelector(".tree-node-former");
-        if (former) former.textContent = "";
+        const nameNotes = node.querySelector(".tree-node-kana");
+        if (nameNotes) nameNotes.textContent = "";
       }
     });
   }

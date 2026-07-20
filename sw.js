@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "family-tree-note-v4-fix4-spine2-wide-family-align2";
+const CACHE_NAME = "family-tree-note-v4-fix4-kinship1";
 const APP_FILES = [
   "./",
   "./index.html",
@@ -15,6 +15,7 @@ const APP_FILES = [
   "./tree-layout.js",
   "./gedcom.js",
   "./person-candidate-utils.js",
+  "./kinship-calculator.js",
   "./app.js",
   "./v4-app.js",
   "./manifest.webmanifest",

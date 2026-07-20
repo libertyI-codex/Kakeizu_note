@@ -2,7 +2,7 @@
   "use strict";
 
   const APP_NAME = "家系図ノート";
-  const APP_VERSION = "1.0.0-prototype.4-fix.4-spine.2";
+  const APP_VERSION = "1.0.0-prototype.4-fix.4-kinship.1";
   const SCHEMA_VERSION = 4;
   const DB_NAME = "family-tree-note";
   const DB_VERSION = 4;
@@ -26,6 +26,7 @@
   const TREE_VIEW_MODES = new Set(["all", "direct", "ancestors", "descendants", "lineage", "blood", "kinship"]);
   const PRIVACY_MODES = new Set(["all", "hide-dates", "hide-photo-dates", "initials"]);
   const PAPER_SIZES = new Set(["auto", "a4-portrait", "a4-landscape", "a3-portrait", "a3-landscape"]);
+  const KINSHIP_DISPLAY_MODES = new Set(["both", "degree", "label", "none"]);
   let databasePromise = null;
 
   function makeId(prefix) {
@@ -132,6 +133,7 @@
       kinshipDepth: "unlimited",
       includePartners: true,
       showGenerationLabels: false,
+      kinshipDisplayMode: "both",
       outputPrivacyMode: "hide-dates",
       printSettings: defaultPrintSettings()
     };
@@ -163,6 +165,7 @@
     settings.kinshipDepth = settings.kinshipDepth === "unlimited" || /^[1-5]$/.test(String(settings.kinshipDepth)) ? String(settings.kinshipDepth) : "unlimited";
     settings.includePartners = settings.includePartners === undefined ? true : Boolean(settings.includePartners);
     settings.showGenerationLabels = Boolean(settings.showGenerationLabels);
+    settings.kinshipDisplayMode = KINSHIP_DISPLAY_MODES.has(settings.kinshipDisplayMode) ? settings.kinshipDisplayMode : "both";
     settings.outputPrivacyMode = PRIVACY_MODES.has(settings.outputPrivacyMode) ? settings.outputPrivacyMode : "hide-dates";
     settings.printSettings = normalizePrintSettings(settings.printSettings);
     return settings;

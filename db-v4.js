@@ -2,7 +2,7 @@
   "use strict";
 
   const Legacy = globalThis.FamilyTreeDB;
-  const APP_VERSION = "1.0.0-prototype.4-fix.4-spine.2";
+  const APP_VERSION = "1.0.0-prototype.4-fix.4-kinship.1";
   const SCHEMA_VERSION = 4;
   const DB_VERSION = 4;
   const DB_NAME = "family-tree-note";
@@ -43,6 +43,7 @@
     return {
       treeId: treeId, focusPersonId: "", orientation: "vertical", scale: 1, schemaVersion: 4, sampleInitialized: true,
       treeViewMode: "all", kinshipDepth: "unlimited", includePartners: true, showGenerationLabels: false,
+      kinshipDisplayMode: "both",
       outputPrivacyMode: "hide-dates", printSettings: { paperSize: "auto", title: "家系図ノート", note: "", showDate: true, showGenerationLabels: false, privacyMode: "hide-dates", scope: "current" }
     };
   }
@@ -56,6 +57,7 @@
     normalized.kinshipDepth = normalized.kinshipDepth === "unlimited" || /^[1-5]$/.test(String(normalized.kinshipDepth)) ? String(normalized.kinshipDepth) : "unlimited";
     normalized.includePartners = normalized.includePartners !== false;
     normalized.showGenerationLabels = Boolean(normalized.showGenerationLabels);
+    if (!["both", "degree", "label", "none"].includes(normalized.kinshipDisplayMode)) normalized.kinshipDisplayMode = "both";
     return normalized;
   }
 

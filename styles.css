@@ -117,6 +117,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .tree-toolbar button { min-width: 46px; min-height: 46px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--green-dark); font-weight: 700; cursor: pointer; }
 .tree-toolbar button:hover { background: var(--green-soft); }
+.kinship-filter-label { min-height: 42px; display: grid; align-content: center; gap: 1px; padding: 2px 8px; border-left: 1px solid var(--border); color: var(--muted); font-size: .67rem; font-weight: 700; }
+.kinship-filter-label select { min-width: 92px; min-height: 28px; padding: 2px 5px; border: 1px solid var(--border); border-radius: 8px; background: white; color: var(--ink); font-size: .78rem; }
 .fab {
   position: absolute; right: 24px; bottom: max(22px, env(safe-area-inset-bottom)); z-index: 6;
   min-height: 56px; display: flex; align-items: center; gap: 9px; padding: 0 22px; border: 0; border-radius: 18px;
@@ -291,6 +293,7 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 .tree-family-unit.is-selected-family .tree-link { stroke: #365f49; stroke-width: 3.4; }
 .tree-family-unit.is-selected-family .tree-partner-link { stroke-width: 2.4; }
 .tree-family-unit.is-dimmed { opacity: .2; }
+.tree-family-unit.is-kinship-dimmed { opacity: .15; }
 .tree-family-unit.is-generation-conflict .tree-link:not(.tree-interaction-hit) { stroke: #8b7041; }
 .tree-crossing-gap { fill: var(--ivory); stroke: none; }
 .tree-crossing-overpass { pointer-events: none; }
@@ -300,19 +303,31 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 .tree-disconnected-divider { stroke: #c8c9bf; stroke-width: 1.5; stroke-dasharray: 5 7; }
 .tree-disconnected-label { fill: var(--muted); font-size: 13px; font-weight: 700; }
 .tree-node { cursor: pointer; }
+.tree-node.is-kinship-dimmed { opacity: .22; }
 .tree-node-card { fill: #fffef9; stroke: #d6d5c9; stroke-width: 1.5; filter: drop-shadow(0 4px 6px rgba(47,65,53,.12)); }
 .tree-node:hover .tree-node-card, .tree-node:focus .tree-node-card { stroke: var(--green); stroke-width: 2.5; }
 .tree-node.is-focus .tree-node-card { stroke: var(--green); stroke-width: 3; }
 .tree-node.has-generation-conflict .tree-node-card { stroke: #8b7041; stroke-dasharray: 5 4; }
 .tree-node-photo-bg { fill: var(--green-soft); }
 .tree-node-initial { fill: var(--green-dark); font-size: 23px; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
-.tree-node-name { fill: var(--ink); font-size: 16px; font-weight: 700; text-anchor: middle; }
-.tree-node-years { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.tree-node-name { fill: var(--ink); font-size: 16.5px; font-weight: 800; text-anchor: middle; }
+.tree-node-kana { fill: var(--muted); font-size: 9.5px; text-anchor: middle; }
+.tree-node-kinship-label { fill: var(--green-dark); font-size: 11px; font-weight: 700; text-anchor: middle; }
+.tree-node-years { fill: var(--muted); font-size: 11px; text-anchor: middle; }
+.tree-node-status { fill: var(--muted); font-size: 9.5px; text-anchor: middle; }
 .tree-node-deceased { fill: #ecebe4; stroke: #d6d5c9; }
 .tree-node-deceased-text { fill: var(--muted); font-size: 10px; text-anchor: middle; }
 .tree-node-former { fill: var(--muted); font-size: 11px; text-anchor: middle; }
-.tree-node-focus-badge { fill: var(--green); }
-.tree-node-focus-text { fill: white; font-size: 9px; font-weight: 700; text-anchor: middle; }
+.tree-node-kinship-badge { fill: #edf3ed; stroke: #b7c7ba; stroke-width: 1; }
+.tree-node-kinship-badge.is-self { fill: var(--green); stroke: var(--green-dark); }
+.tree-node-kinship-badge.is-spouse { fill: #f1eee5; stroke: #b8aa88; }
+.tree-node-kinship-badge.is-affinity { fill: #edf0f5; stroke: #aab5c4; }
+.tree-node-kinship-badge.is-outside { fill: #f1efeb; stroke: #c5c0b6; }
+.tree-node-kinship-badge-text { fill: #3f6250; font-size: 9px; font-weight: 800; text-anchor: middle; }
+.tree-node-kinship-badge-text.is-self { fill: white; }
+.tree-node-kinship-badge-text.is-spouse { fill: #6c5b37; }
+.tree-node-kinship-badge-text.is-affinity { fill: #4d6077; }
+.tree-node-kinship-badge-text.is-outside { fill: #6d6961; }
 
 @media (max-width: 840px) {
   :root { --header-height: 70px; }
@@ -328,6 +343,7 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
   .tree-toolbar { left: 10px; right: 72px; bottom: max(12px, env(safe-area-inset-bottom)); gap: 2px; padding: 4px; overflow-x: auto; scrollbar-width: none; }
   .tree-toolbar::-webkit-scrollbar { display: none; }
   .tree-toolbar button { flex: 0 0 40px; min-width: 40px; min-height: 44px; padding: 0 6px; }
+  .kinship-filter-label { flex: 0 0 108px; }
   .toolbar-label { display: none; }
   .detail-panel {
     position: fixed; left: 0; right: 0; bottom: 0; width: auto; height: min(82vh, 720px); max-height: calc(100% - 50px); margin: 0;
@@ -372,6 +388,27 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 .mobile-nav { display: none; }
 .app-view { min-width: 0; flex: 1; }
 .view-summary { position: absolute; top: 16px; right: 18px; z-index: 6; min-height: 39px; padding: 6px 13px; border: 1px solid var(--border); border-radius: 999px; background: rgba(255,254,249,.95); color: var(--green-dark); box-shadow: var(--small-shadow); font-weight: 700; cursor: pointer; }
+.kinship-summary { position: absolute; top: 65px; left: 18px; z-index: 6; max-width: calc(100% - 36px); display: flex; flex-wrap: wrap; gap: 4px 13px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 13px; background: rgba(255,254,249,.95); box-shadow: var(--small-shadow); color: var(--muted); font-size: .74rem; pointer-events: none; }
+.kinship-summary strong { color: var(--green-dark); }
+.kinship-legend { position: absolute; top: 116px; left: 18px; z-index: 6; width: 190px; border: 1px solid var(--border); border-radius: 12px; background: rgba(255,254,249,.96); box-shadow: var(--small-shadow); color: var(--ink); font-size: .75rem; }
+.kinship-legend summary { min-height: 38px; display: flex; align-items: center; padding: 7px 11px; color: var(--green-dark); font-weight: 800; cursor: pointer; }
+.kinship-legend-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 0 10px 10px; }
+.kinship-legend-grid span { min-width: 0; padding: 3px 6px; border: 1px solid #cbd5cc; border-radius: 999px; background: #edf3ed; text-align: center; white-space: nowrap; }
+.kinship-legend-grid [data-kind=self] { background: var(--green); border-color: var(--green-dark); color: white; }
+.kinship-legend-grid [data-kind=spouse] { background: #f1eee5; border-color: #b8aa88; }
+.kinship-legend-grid [data-kind=affinity] { background: #edf0f5; border-color: #aab5c4; }
+.kinship-legend-grid [data-kind=outside] { background: #f1efeb; border-color: #c5c0b6; }
+.kinship-detail-summary { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 9px; padding: 11px; border-radius: 12px; background: var(--green-soft); }
+.kinship-detail-summary strong { min-width: 0; }
+.kinship-detail-summary small { grid-column: 2; color: var(--muted); }
+.kinship-detail-degree { padding: 4px 8px; border: 1px solid #aebfae; border-radius: 999px; background: white; color: var(--green-dark); font-size: .75rem; font-weight: 800; white-space: nowrap; }
+.kinship-path-list { position: relative; display: grid; gap: 5px; margin: 12px 0 0; padding: 0; list-style: none; }
+.kinship-path-list li { display: grid; grid-template-columns: minmax(58px, auto) 1fr; align-items: center; gap: 7px; min-height: 34px; }
+.kinship-path-list li > span { color: var(--muted); font-size: .76rem; text-align: right; }
+.kinship-path-list button { min-width: 0; min-height: 34px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 9px; background: white; color: var(--ink); text-align: left; font-weight: 700; cursor: pointer; }
+.kinship-path-list button:hover, .kinship-path-list button:focus-visible { border-color: var(--green); background: var(--green-soft); }
+.kinship-path-warning { margin-top: 10px; padding: 9px 11px; border-radius: 10px; background: #fff8ee; color: #715b38; font-size: .78rem; }
+.kinship-path-warning ul { margin: 4px 0 0; padding-left: 18px; }
 .tree-generation-label { fill: var(--green); font-size: 13px; font-weight: 700; }
 
 .people-section { min-height: 0; overflow: auto; background: var(--ivory); }
@@ -472,6 +509,9 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 
 @media (max-width: 560px) {
   .view-summary { top: 58px; right: 10px; max-width: calc(100% - 20px); font-size: .76rem; }
+  .kinship-summary { top: 104px; left: 10px; right: 10px; max-width: none; flex-wrap: nowrap; overflow: hidden; padding: 7px 9px; white-space: nowrap; font-size: .68rem; }
+  .kinship-summary span:nth-of-type(n+3) { display: none; }
+  .kinship-legend { top: 148px; left: 10px; width: 174px; }
   .people-page { padding: 20px 12px 35px; }
   .people-heading { display: grid; gap: 14px; }
   .people-heading .button-row { width: 100%; }

@@ -1,8 +1,8 @@
 {
   "name": "家系図ノート",
   "short_name": "家系図ノート",
-  "description": "Direct Lineage Railを横幅圧縮より優先し、直系祖先を縦に追える端末内保存の家系図アプリ（Ver.1.0 試作4 修正4 直系配置修正2）",
-  "version": "1.0.0-prototype.4-fix.4-spine.2",
+  "description": "基準人物から見た1～6親等・姻族・関係経路を表示できる端末内保存の家系図アプリ（Ver.1.0 試作4 修正4 親等表示1）",
+  "version": "1.0.0-prototype.4-fix.4-kinship.1",
   "lang": "ja",
   "start_url": "./index.html",
   "scope": "./",
