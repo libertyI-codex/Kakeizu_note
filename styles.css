@@ -224,10 +224,13 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 .segmented-control button.is-active { background: white; color: var(--green-dark); box-shadow: var(--small-shadow); }
 .relative-dialog-body { gap: 17px !important; }
 .relative-source-panel { min-height: 94px; }
+.relative-source-panel > label { display: grid; gap: 5px; color: var(--muted); font-size: .9rem; font-weight: 700; }
+.relative-source-panel > label input { width: 100%; min-height: 48px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: white; font-size: 1rem; font-weight: 400; }
+#relativeExistingPanel:not([hidden]) { min-height: 326px; }
 .soft-callout { display: flex; align-items: center; gap: 14px; padding: 15px; border: 1px solid #cfddcf; border-radius: 14px; background: var(--green-soft); }
 .callout-icon { width: 42px; height: 42px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; background: white; color: var(--green); font-size: 1.45rem; }
 .soft-callout p { margin: 2px 0 0; color: var(--muted); font-size: .86rem; }
-.relative-picker { max-height: 240px; margin-top: 10px; }
+.person-picker.relative-picker { max-height: 240px; margin-top: 10px; }
 .relative-picker .person-pick[aria-selected="true"] { border-color: var(--green); background: var(--green-soft); box-shadow: inset 4px 0 var(--green); }
 .relation-details-box { display: grid; gap: 13px; padding: 15px; border: 1px solid var(--border); border-radius: 14px; background: #fff; }
 .relation-details-box h3 { margin: 0; font-size: 1rem; }
@@ -244,6 +247,13 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 .person-pick { min-height: 56px; display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 11px; border: 1px solid var(--border); border-radius: 12px; background: white; text-align: left; cursor: pointer; }
 .person-pick:hover { border-color: var(--green); background: var(--green-soft); }
 .person-pick.is-current { border-color: var(--green); box-shadow: inset 4px 0 var(--green); }
+.candidate-person-row { min-height: 72px; align-items: flex-start; }
+.candidate-person-copy { display: grid; min-width: 0; flex: 1 1 auto; gap: 2px; }
+.candidate-person-copy > strong { font-size: 1rem; line-height: 1.35; overflow-wrap: anywhere; }
+.candidate-person-copy small { color: var(--muted); font-size: .76rem; line-height: 1.4; }
+.candidate-name-notes, .candidate-life { display: flex; flex-wrap: wrap; gap: 3px 10px; }
+.candidate-deceased { padding-inline: 6px; border-radius: 999px; background: #eeece7; color: #6f6b64; }
+.candidate-identifier { font-variant-numeric: tabular-nums; }
 
 .settings-dialog { width: min(700px, calc(100% - 32px)); }
 .settings-body { display: grid; gap: 16px; max-height: calc(100vh - 130px); }

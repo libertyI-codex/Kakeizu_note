@@ -3,6 +3,7 @@
 
   const DB = globalThis.FamilyTreeDB;
   const Layout = globalThis.TreeLayout;
+  const PersonCandidates = globalThis.PersonCandidateUtils;
   const SVG_NS = "http://www.w3.org/2000/svg";
   const state = {
     persons: [],
@@ -132,6 +133,71 @@
   function matchesPersonSearch(person, query) {
     const normalized = DB.normalizeSearchText(query);
     return !normalized || normalizedPersonText(person).includes(normalized);
+  }
+
+  function personCandidateOptionLabel(person) {
+    const details = [];
+    const kana = ((person.familyNameKana || "") + " " + (person.givenNameKana || "")).trim();
+    if (person.formerFamilyName) details.push("旧姓 " + person.formerFamilyName);
+    if (kana) details.push(kana);
+    if (person.birthDate) details.push(formatPersonDate(person, "birth", ""));
+    if (person.isDeceased) details.push("故人");
+    return fullName(person) + (details.length ? "（" + details.join("・") + "）" : "");
+  }
+
+  function candidateIdentityHtml(person, showIdentifier) {
+    const formerName = person.formerFamilyName ? "<span>旧姓 " + escapeHtml(person.formerFamilyName) + "</span>" : "";
+    const kana = ((person.familyNameKana || "") + " " + (person.givenNameKana || "")).trim();
+    const kanaText = kana ? "<span>" + escapeHtml(kana) + "</span>" : "";
+    const life = person.birthDate ? formatPersonDate(person, "birth", "") : "生年未登録";
+    const deceased = person.isDeceased ? "<span class=\"candidate-deceased\">故人</span>" : "";
+    const identifier = showIdentifier ? "<span class=\"candidate-identifier\">識別 " + escapeHtml(String(person.id || "").slice(-8)) + "</span>" : "";
+    return "<span class=\"candidate-person-copy\"><strong>" + escapeHtml(fullName(person)) + "</strong>" +
+      ((formerName || kanaText) ? "<small class=\"candidate-name-notes\">" + formerName + kanaText + "</small>" : "") +
+      "<small class=\"candidate-life\"><span>" + escapeHtml(life) + "</span>" + deceased + identifier + "</small></span>";
+  }
+
+  function parentPathExists(startId, targetId) {
+    const childrenByParent = new Map();
+    state.relationships.forEach(function (relationship) {
+      if (relationship.type !== "parent-child") return;
+      if (!childrenByParent.has(relationship.fromPersonId)) childrenByParent.set(relationship.fromPersonId, []);
+      childrenByParent.get(relationship.fromPersonId).push(relationship.toPersonId);
+    });
+    const queue = [startId];
+    const visited = new Set();
+    while (queue.length) {
+      const personId = queue.shift();
+      if (personId === targetId) return true;
+      if (visited.has(personId)) continue;
+      visited.add(personId);
+      (childrenByParent.get(personId) || []).forEach(function (childId) { queue.push(childId); });
+    }
+    return false;
+  }
+
+  function canAddRelationshipCandidate(baseId, candidateId, spec) {
+    if (!baseId || !candidateId || baseId === candidateId) return false;
+    const base = findPerson(baseId);
+    const candidate = findPerson(candidateId);
+    if (!base || !candidate) return false;
+    if (state.currentTree && ((base.treeId && base.treeId !== state.currentTree.id) || (candidate.treeId && candidate.treeId !== state.currentTree.id))) return false;
+    if (spec.type === "partner") {
+      return !state.relationships.some(function (relationship) {
+        return relationship.type === "partner" &&
+          ((relationship.fromPersonId === baseId && relationship.toPersonId === candidateId) ||
+           (relationship.fromPersonId === candidateId && relationship.toPersonId === baseId));
+      });
+    }
+    let parentId = baseId;
+    let childId = candidateId;
+    if (spec.role === "parent" || spec.direction === "base-child") { parentId = candidateId; childId = baseId; }
+    const duplicateOrReverse = state.relationships.some(function (relationship) {
+      return relationship.type === "parent-child" &&
+        ((relationship.fromPersonId === parentId && relationship.toPersonId === childId) ||
+         (relationship.fromPersonId === childId && relationship.toPersonId === parentId));
+    });
+    return !duplicateOrReverse && !parentPathExists(childId, parentId);
   }
 
   function relationLabel(type) {
@@ -1020,6 +1086,24 @@
     elements.relationStatusLabel.hidden = kind !== "partner";
   }
 
+  function renderRelationshipTargetOptions(baseId, selectedId, relationship) {
+    let candidates;
+    if (relationship) {
+      candidates = state.persons.filter(function (person) { return person.id === selectedId; });
+    } else {
+      const checked = elements.relationshipForm.querySelector("input[name=parentDirection]:checked");
+      const spec = { type: elements.relationKind.value, direction: checked ? checked.value : "base-parent" };
+      candidates = state.persons.filter(function (person) {
+        return canAddRelationshipCandidate(baseId, person.id, spec);
+      });
+    }
+    candidates = PersonCandidates.sortPersonsByKanjiName(candidates);
+    elements.relationTarget.innerHTML = candidates.map(function (person) {
+      return "<option value=\"" + escapeHtml(person.id) + "\">" + escapeHtml(personCandidateOptionLabel(person)) + "</option>";
+    }).join("");
+    elements.relationTarget.value = selectedId && candidates.some(function (person) { return person.id === selectedId; }) ? selectedId : (candidates[0] && candidates[0].id) || "";
+  }
+
   function openRelationshipDialog(baseId, relationship) {
     const base = findPerson(baseId);
     if (!base) return;
@@ -1034,9 +1118,6 @@
     elements.relationshipBaseId.value = base.id;
     let targetId = "";
     if (relationship) targetId = relationship.fromPersonId === base.id ? relationship.toPersonId : relationship.fromPersonId;
-    const candidates = relationship ? state.persons.filter(function (person) { return person.id === targetId; }) : state.persons.filter(function (person) { return person.id !== base.id; });
-    elements.relationTarget.innerHTML = candidates.map(function (person) { return "<option value=\"" + escapeHtml(person.id) + "\">" + escapeHtml(fullName(person)) + "</option>"; }).join("");
-    elements.relationTarget.value = targetId || (candidates[0] && candidates[0].id) || "";
     elements.relationshipVerificationStatus.value = relationship ? (relationship.verificationStatus || "unconfirmed") : "unconfirmed";
     elements.relationKind.value = relationship ? relationship.type : "parent-child";
     elements.relationKind.disabled = Boolean(relationship);
@@ -1055,6 +1136,7 @@
         elements.relationshipForm.querySelector("input[name=parentDirection][value=" + direction + "]").checked = true;
       }
     }
+    renderRelationshipTargetOptions(base.id, targetId, relationship);
     elements.relationshipDialog.showModal();
   }
 
@@ -1070,6 +1152,7 @@
     const info = relativeRoleInfo();
     typeOptions(info.kind, elements.quickRelationType);
     elements.quickStatusLabel.hidden = info.kind !== "partner";
+    if (state.relativeSource === "existing") renderRelativePersonResults();
   }
 
   function setRelativeSource(source) {
@@ -1085,15 +1168,20 @@
 
   function renderRelativePersonResults() {
     const baseId = elements.relativeBaseId.value;
-    const query = elements.relativePersonSearch.value.trim().toLocaleLowerCase("ja").replace(/\s+/g, "");
-    const people = state.persons.filter(function (person) {
-      if (person.id === baseId) return false;
-      if (!query) return true;
-      return matchesPersonSearch(person, query);
-    }).slice(0, 40);
+    const query = elements.relativePersonSearch.value;
+    const spec = quickRelationSpec();
+    const candidates = state.persons.filter(function (person) {
+      return canAddRelationshipCandidate(baseId, person.id, spec);
+    });
+    if (state.selectedExistingRelativeId && !candidates.some(function (person) { return person.id === state.selectedExistingRelativeId; })) {
+      state.selectedExistingRelativeId = "";
+    }
+    const people = PersonCandidates.rankAndSortPersonCandidates(candidates, query).slice(0, 80);
+    const nameCounts = new Map();
+    people.forEach(function (person) { const name = fullName(person); nameCounts.set(name, (nameCounts.get(name) || 0) + 1); });
     elements.relativePersonResults.innerHTML = people.length ? people.map(function (person) {
       const selected = person.id === state.selectedExistingRelativeId;
-      return "<button class=\"person-pick\" type=\"button\" data-existing-relative=\"" + escapeHtml(person.id) + "\" aria-selected=\"" + selected + "\">" + avatarHtml(person) + "<span><strong>" + escapeHtml(fullName(person)) + "</strong><small>" + escapeHtml(lifeYears(person)) + "</small></span></button>";
+      return "<button class=\"person-pick candidate-person-row\" type=\"button\" data-existing-relative=\"" + escapeHtml(person.id) + "\" aria-selected=\"" + selected + "\">" + avatarHtml(person) + candidateIdentityHtml(person, nameCounts.get(fullName(person)) > 1) + "</button>";
     }).join("") : "<p class=\"search-empty\">該当する人物はいません</p>";
   }
 
@@ -1587,7 +1675,15 @@
       });
     });
     elements.personForm.addEventListener("submit", handlePersonSubmit);
-    elements.relationKind.addEventListener("change", updateRelationshipKind);
+    elements.relationKind.addEventListener("change", function () {
+      updateRelationshipKind();
+      if (!elements.relationshipId.value) renderRelationshipTargetOptions(elements.relationshipBaseId.value, elements.relationTarget.value, null);
+    });
+    elements.relationshipForm.querySelectorAll("input[name=parentDirection]").forEach(function (input) {
+      input.addEventListener("change", function () {
+        if (!elements.relationshipId.value) renderRelationshipTargetOptions(elements.relationshipBaseId.value, elements.relationTarget.value, null);
+      });
+    });
     elements.relationshipForm.addEventListener("submit", handleRelationshipSubmit);
     elements.detailContent.addEventListener("click", handleDetailClick);
     elements.relativeRole.addEventListener("change", updateRelativeRole);
