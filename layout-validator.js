@@ -46,9 +46,29 @@
     });
 
     const relationshipById = new Map(relationships.map(function (item) { return [item.id, item]; }));
+    const coupleIds = new Set();
+    (layout.coupleBlocks || []).forEach(function (block) {
+      if (coupleIds.has(block.id)) add("duplicate-couple-block", "error", { coupleBlockId: block.id, relationshipId: block.relationshipId }, "CoupleBlockが重複しています。");
+      coupleIds.add(block.id);
+      const relationship = relationshipById.get(block.relationshipId);
+      const displayedIds = [block.leftPersonId, block.rightPersonId];
+      if (!relationship || relationship.type !== "partner" || !sameIds(displayedIds, [relationship.fromPersonId, relationship.toPersonId])) {
+        add("couple-block-relationship-mismatch", "error", { coupleBlockId: block.id, relationshipId: block.relationshipId }, "CoupleBlockとrelationshipsの人物IDが一致しません。");
+      }
+      const left = nodeById.get(block.leftPersonId); const right = nodeById.get(block.rightPersonId);
+      if (block.status === "current" && left && right && left.generation === right.generation) {
+        const gap = right.x - (left.x + layout.cardWidth);
+        if (gap < 23 || gap > 37) add("current-couple-not-adjacent", "warning", { coupleBlockId: block.id, relationshipId: block.relationshipId }, "現在のパートナーが標準間隔で隣接していません。");
+      }
+    });
     const busSegments = [];
     routes.forEach(function (route) {
       const subtree = layout.subtreeById && layout.subtreeById.get(route.familySubtreeId);
+      if (route.drawPartnerLine && route.partnerRelationship) {
+        if (!route.coupleBlockId || !coupleIds.has(route.coupleBlockId)) add("couple-block-missing", "error", { routeId: route.routeId, relationshipId: route.partnerRelationship.id, familyKeys: [route.familyKey] }, "パートナー線に対応するCoupleBlockがありません。");
+        if (!route.partnerPorts || !route.partnerPorts.left || !route.partnerPorts.right) add("partner-port-missing", "error", { routeId: route.routeId, relationshipId: route.partnerRelationship.id, familyKeys: [route.familyKey] }, "パートナー線の専用ポートがありません。");
+        if (!route.partnerLinePaths || route.partnerLinePaths.length !== 2) add("partner-double-line-missing", "error", { routeId: route.routeId, relationshipId: route.partnerRelationship.id, familyKeys: [route.familyKey] }, "婚姻・パートナー線が二重線になっていません。");
+      }
       if (!route.unionNodeId || !unionIds.has(route.unionNodeId)) add("union-node-missing", "error", { routeId: route.routeId, familyKeys: [route.familyKey] }, "経路に対応するUnionNodeがありません。");
       if (!route.children.length && route.busPathD) add("children-bus-without-child", "error", { routeId: route.routeId, familyKeys: [route.familyKey] }, "子どもがいないchildren-busが生成されています。");
       if (route.children.length && subtree && (route.busMinX < subtree.minX - EPSILON || route.busMaxX > subtree.maxX + EPSILON)) {

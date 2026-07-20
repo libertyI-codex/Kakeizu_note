@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "family-tree-note-v4-fix4";
+const CACHE_NAME = "family-tree-note-v4-fix4-couple1";
 const APP_FILES = [
   "./",
   "./index.html",
@@ -10,6 +10,7 @@ const APP_FILES = [
   "./generation-resolver.js",
   "./union-node-builder.js",
   "./family-subtree-layout.js",
+  "./couple-block-layout.js",
   "./layout-validator.js",
   "./tree-layout.js",
   "./gedcom.js",

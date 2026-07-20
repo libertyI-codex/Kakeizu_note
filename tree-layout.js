@@ -4,6 +4,7 @@
   const Resolver = globalThis.GenerationResolver;
   const UnionBuilder = globalThis.UnionNodeBuilder;
   const SubtreeLayout = globalThis.FamilySubtreeLayout;
+  const CoupleLayout = globalThis.CoupleBlockLayout;
   const Validator = globalThis.FamilyLayoutValidator;
   const CARD_WIDTH = 184;
   const CARD_HEIGHT = 128;
@@ -29,6 +30,7 @@
   }
   function relationshipType(value) { return value === "adoptive" || value === "step" ? value : "biological"; }
   function typeRank(value) { return { biological: 0, adoptive: 1, step: 2, partner: 3 }[value] === undefined ? 4 : { biological: 0, adoptive: 1, step: 2, partner: 3 }[value]; }
+  function partnerStatusRank(value) { return { current: 0, unknown: 1, separated: 2, divorced: 3, ended: 4 }[value] === undefined ? 1 : { current: 0, unknown: 1, separated: 2, divorced: 3, ended: 4 }[value]; }
   function generationOf(personId, state) {
     const relative = state.personGenerations[personId];
     return Number.isFinite(relative) ? relative : (Number.isFinite(state.localGenerations[personId]) ? state.localGenerations[personId] : 0);
@@ -96,6 +98,7 @@
     const totalStartedAt = performance.now();
     if (!persons.length) return { nodes: [], bounds: { x: 0, y: 0, width: 0, height: 0 }, cardWidth: CARD_WIDTH, cardHeight: CARD_HEIGHT, generationLayers: [], familyBlocks: [], familySubtrees: [], unionNodes: [], siblingGroups: [], corridors: [], diagnostics: [] };
     if (!Resolver || !UnionBuilder || !SubtreeLayout || !Validator) throw new Error("家系図レイアウトに必要なプログラムを読み込めませんでした。");
+    if (!CoupleLayout) throw new Error("CoupleBlockレイアウトを読み込めませんでした。");
     const generationStartedAt = performance.now();
     const generationState = Resolver.resolve(persons, relationships, focusPersonId, options || {});
     const generationCalculationMs = performance.now() - generationStartedAt;
@@ -103,6 +106,7 @@
     /* Expose the deterministic comparator without leaking another global. */
     unionModel.comparePeople = comparePeople;
     const subtreeState = SubtreeLayout.build(persons, relationships, generationState, unionModel, { cardWidth: CARD_WIDTH, cardHeight: CARD_HEIGHT });
+    const coupleState = CoupleLayout.apply(persons, relationships, generationState, unionModel, subtreeState, { cardWidth: CARD_WIDTH, cardHeight: CARD_HEIGHT });
     const nodes = subtreeState.nodes;
     const minX = Math.min.apply(null, nodes.map(function (node) { return node.x; }));
     if (minX < PADDING_X) {
@@ -111,8 +115,9 @@
       unionModel.unionNodes.forEach(function (union) { union.centerX += offset; if (union.bounds) union.bounds.x += offset; });
       subtreeState.familySubtrees.forEach(function (subtree) { subtree.centerX += offset; subtree.minX += offset; subtree.maxX += offset; if (subtree.bounds) subtree.bounds.x += offset; });
       subtreeState.siblingGroups.forEach(function (group) { group.minX += offset; group.maxX += offset; group.centerX += offset; });
+      coupleState.coupleBlocks.forEach(function (block) { block.centerX += offset; block.minX += offset; block.maxX += offset; });
     }
-    const layoutDiagnostics = unionModel.diagnostics.concat(subtreeState.diagnostics);
+    const layoutDiagnostics = unionModel.diagnostics.concat(subtreeState.diagnostics, coupleState.diagnostics);
     const layout = {
       nodes: nodes,
       bounds: computeBounds(nodes),
@@ -129,6 +134,8 @@
       familySubtrees: subtreeState.familySubtrees,
       subtreeById: subtreeState.subtreeById,
       siblingGroups: subtreeState.siblingGroups,
+      coupleBlocks: coupleState.coupleBlocks,
+      coupleByUnionId: coupleState.coupleByUnionId,
       disconnectedComponents: generationState.disconnectedComponents,
       generationDiagnostics: generationState.diagnostics,
       layoutDiagnostics: layoutDiagnostics,
@@ -138,7 +145,7 @@
       familyUnits: legacyFamilyUnits(unionModel),
       personPorts: {},
       trackGroups: [],
-      performance: Object.assign({ generationCalculationMs: generationCalculationMs }, unionModel.timings, subtreeState.timings)
+      performance: Object.assign({ generationCalculationMs: generationCalculationMs }, unionModel.timings, subtreeState.timings, coupleState.timings)
     };
     layout.performance.computeBeforeRoutingMs = performance.now() - totalStartedAt;
     return layout;
@@ -172,6 +179,8 @@
           baseFamilyKey: union.familyKey,
           familySubtreeId: union.subtreeId,
           unionNodeId: union.id,
+          coupleBlock: layout.coupleByUnionId && layout.coupleByUnionId.get(union.id) || null,
+          coupleBlockId: layout.coupleByUnionId && layout.coupleByUnionId.get(union.id) ? layout.coupleByUnionId.get(union.id).id : "",
           routeId: "route:" + union.id + ":" + type,
           parentIds: union.parentIds.slice(), parentNodes: parents, partnerRelationship: union.partnerRelationship,
           partnerRelationId: union.partnerRelationId, relationshipType: type, childIds: children.map(function (child) { return child.id; }), children: children,
@@ -184,6 +193,7 @@
           nonAdjacent: children.length > 0 && Number.isFinite(parentGeneration) && Number.isFinite(childGeneration) && parentGeneration - childGeneration !== 1,
           generationConflict: false, unionAnchorX: union.centerX, unionAnchorY: 0, sourceX: union.centerX, sourceY: 0,
           busMinX: 0, busMaxX: 0, busY: 0, parentPathD: "", busPathD: "", partnerPathD: "", partnerRouteY: 0,
+          partnerLinePaths: [], partnerHitPathD: "", partnerPorts: null, partnerMarker: null,
           segments: [], routingIssues: [], routeLength: 0
         });
       });
@@ -255,12 +265,43 @@
         personId: node.id,
         parentTop: { x: node.x + CARD_WIDTH / 2, y: node.y },
         childBottom: { x: node.x + CARD_WIDTH / 2, y: node.y + CARD_HEIGHT },
+        parentPort: { x: node.x + CARD_WIDTH / 2, y: node.y },
+        childPort: { x: node.x + CARD_WIDTH / 2, y: node.y + CARD_HEIGHT },
         partnerLeft: { x: node.x, y: node.y + CARD_HEIGHT / 2 },
         partnerRight: { x: node.x + CARD_WIDTH, y: node.y + CARD_HEIGHT / 2 },
+        partnerLeftPort: { x: node.x, y: node.y + CARD_HEIGHT / 2, name: "partner-left-port" },
+        partnerRightPort: { x: node.x + CARD_WIDTH, y: node.y + CARD_HEIGHT / 2, name: "partner-right-port" },
+        partnerPortsByRelationship: {},
+        secondaryPartnerPorts: [],
         adoptiveTop: { x: node.x + CARD_WIDTH / 2 - PORT_STEP, y: node.y },
         stepTop: { x: node.x + CARD_WIDTH / 2 + PORT_STEP, y: node.y },
         secondaryUnionPorts: []
       };
+    });
+    const partnerEntries = new Map();
+    (layout.coupleBlocks || []).forEach(function (block) {
+      [[block.leftPersonId, "right"], [block.rightPersonId, "left"]].forEach(function (entry) {
+        const key = entry[0] + ":" + entry[1];
+        if (!partnerEntries.has(key)) partnerEntries.set(key, []);
+        partnerEntries.get(key).push({ block: block, side: entry[1] });
+      });
+    });
+    partnerEntries.forEach(function (entries, key) {
+      entries.sort(function (first, second) { return partnerStatusRank(first.block.status) - partnerStatusRank(second.block.status) || stable(first.block.relationshipId).localeCompare(stable(second.block.relationshipId)); });
+      const personId = key.slice(0, key.lastIndexOf(":"));
+      const personPorts = ports[personId];
+      if (!personPorts) return;
+      entries.forEach(function (entry, index) {
+        const sign = index % 2 ? -1 : 1;
+        const offset = index ? sign * Math.ceil(index / 2) * 12 : 0;
+        const x = entry.side === "left" ? personPorts.partnerLeft.x : personPorts.partnerRight.x;
+        const y = (entry.side === "left" ? personPorts.partnerLeft.y : personPorts.partnerRight.y) + offset;
+        const name = index ? "secondary-partner-" + entry.side + "-port-" + index : "partner-" + entry.side + "-port";
+        const assignment = { x: x, y: y, side: entry.side, name: name, index: index, relationshipId: entry.block.relationshipId };
+        personPorts.partnerPortsByRelationship[entry.block.relationshipId] = assignment;
+        entry.block.portAssignments[personId] = assignment;
+        if (index) personPorts.secondaryPartnerPorts.push(assignment);
+      });
     });
     entriesByChild.forEach(function (entries, childId) {
       entries.sort(function (first, second) { return typeRank(first.route.relationshipType) - typeRank(second.route.relationshipType) || first.route.routeId.localeCompare(second.route.routeId); });
@@ -286,6 +327,78 @@
     }).length;
   }
 
+  function offsetPolyline(points, offset) {
+    if (!points || points.length < 2) return (points || []).slice();
+    const directions = [];
+    const normals = [];
+    for (let index = 1; index < points.length; index += 1) {
+      const dx = points[index].x - points[index - 1].x; const dy = points[index].y - points[index - 1].y;
+      const length = Math.hypot(dx, dy) || 1;
+      const direction = { x: dx / length, y: dy / length };
+      directions.push(direction); normals.push({ x: -direction.y, y: direction.x });
+    }
+    function shifted(point, normal) { return { x: point.x + normal.x * offset, y: point.y + normal.y * offset }; }
+    const result = [shifted(points[0], normals[0])];
+    for (let index = 1; index < points.length - 1; index += 1) {
+      const firstPoint = shifted(points[index], normals[index - 1]);
+      const secondPoint = shifted(points[index], normals[index]);
+      const firstDirection = directions[index - 1]; const secondDirection = directions[index];
+      const cross = firstDirection.x * secondDirection.y - firstDirection.y * secondDirection.x;
+      if (Math.abs(cross) < EPSILON) {
+        result.push({ x: (firstPoint.x + secondPoint.x) / 2, y: (firstPoint.y + secondPoint.y) / 2 });
+      } else {
+        const deltaX = secondPoint.x - firstPoint.x; const deltaY = secondPoint.y - firstPoint.y;
+        const amount = (deltaX * secondDirection.y - deltaY * secondDirection.x) / cross;
+        result.push({ x: firstPoint.x + firstDirection.x * amount, y: firstPoint.y + firstDirection.y * amount });
+      }
+    }
+    result.push(shifted(points[points.length - 1], normals[normals.length - 1]));
+    return result;
+  }
+
+  function buildPartnerDoubleLineGeometry(route, layout) {
+    if (!route.partnerRelationship || route.parentNodes.length !== 2) return null;
+    const relationshipId = route.partnerRelationship.id;
+    const ordered = route.parentNodes.slice().sort(function (first, second) { return first.x - second.x || stable(first.id).localeCompare(stable(second.id)); });
+    const leftNode = ordered[0]; const rightNode = ordered[1];
+    const leftPorts = layout.personPorts[leftNode.id]; const rightPorts = layout.personPorts[rightNode.id];
+    const leftPort = leftPorts.partnerPortsByRelationship[relationshipId] || leftPorts.partnerRightPort;
+    const rightPort = rightPorts.partnerPortsByRelationship[relationshipId] || rightPorts.partnerLeftPort;
+    const start = { x: leftPort.x, y: leftPort.y }; const end = { x: rightPort.x, y: rightPort.y };
+    const obstacleCount = countPartnerObstacles(route, layout);
+    const shortHorizontal = obstacleCount === 0 && Math.abs(start.y - end.y) < EPSILON;
+    let centerPoints;
+    let unionPoint;
+    if (shortHorizontal) {
+      centerPoints = [start, end];
+      unionPoint = { x: (start.x + end.x) / 2, y: start.y };
+    } else if (obstacleCount === 0) {
+      const middleX = (start.x + end.x) / 2;
+      centerPoints = [start, { x: middleX, y: start.y }, { x: middleX, y: end.y }, end];
+      unionPoint = { x: middleX, y: (start.y + end.y) / 2 };
+    } else {
+      const leftStubX = start.x + 18; const rightStubX = end.x - 18;
+      const laneY = Math.max(leftNode.y, rightNode.y) + CARD_HEIGHT + 20 + Math.max(0, route.typeIndex) * 10;
+      centerPoints = [start, { x: leftStubX, y: start.y }, { x: leftStubX, y: laneY }, { x: rightStubX, y: laneY }, { x: rightStubX, y: end.y }, end];
+      unionPoint = { x: (leftStubX + rightStubX) / 2, y: laneY };
+    }
+    const separation = 5;
+    const upper = offsetPolyline(centerPoints, -separation / 2);
+    const lower = offsetPolyline(centerPoints, separation / 2);
+    route.partnerPorts = {
+      left: { personId: leftNode.id, x: start.x, y: start.y, name: leftPort.name || "partner-right-port" },
+      right: { personId: rightNode.id, x: end.x, y: end.y, name: rightPort.name || "partner-left-port" }
+    };
+    route.partnerLinePaths = [pathFrom(upper), pathFrom(lower)];
+    route.partnerHitPathD = pathFrom(centerPoints);
+    route.partnerPathD = route.partnerHitPathD;
+    route.partnerSegments = segmentsFrom(centerPoints, route, "partner-double-line");
+    route.partnerHasObstacles = !shortHorizontal;
+    route.partnerRouteY = unionPoint.y;
+    route.partnerMarker = { x: unionPoint.x, y: unionPoint.y };
+    return unionPoint;
+  }
+
   function buildRouteGeometry(route, layout, corridor, trackGroup) {
     if (!route.parentNodes.length) return;
     const subtree = layout.subtreeById.get(route.familySubtreeId);
@@ -293,28 +406,20 @@
     const childTop = route.children.length ? Math.min.apply(null, route.children.map(function (child) { return child.node.y; })) : parentBottom + BASE_CORRIDOR_HEIGHT;
     const centers = route.parentNodes.map(function (node) { return node.x + CARD_WIDTH / 2; }).sort(function (a, b) { return a - b; });
     const childCenter = route.children.length ? route.children.reduce(function (sum, child) { return sum + child.portX; }, 0) / route.children.length : centers.reduce(function (sum, value) { return sum + value; }, 0) / centers.length;
-    let anchorX = childCenter;
-    if (centers.length === 2) anchorX = Math.max(centers[0] + 14, Math.min(centers[1] - 14, childCenter));
+    let anchorX = route.coupleBlock ? route.coupleBlock.centerX : childCenter;
+    if (!route.coupleBlock && centers.length === 2) anchorX = Math.max(centers[0] + 14, Math.min(centers[1] - 14, childCenter));
     else if (centers.length === 1) anchorX = Math.max(centers[0] - CARD_WIDTH / 2 + 18, Math.min(centers[0] + CARD_WIDTH / 2 - 18, childCenter));
     route.unionAnchorX = anchorX; route.sourceX = anchorX;
-    route.partnerHasObstacles = countPartnerObstacles(route, layout) > 0 || route.partnerGenerationMismatch;
+    const partnerUnionPoint = buildPartnerDoubleLineGeometry(route, layout);
+    route.partnerHasObstacles = partnerUnionPoint ? route.partnerHasObstacles : false;
     const partnerIndex = Math.max(0, route.trackIndex);
     route.partnerTrackIndex = route.partnerHasObstacles ? partnerIndex : -1;
-    route.partnerRouteY = parentBottom + 12 + partnerIndex * PARTNER_TRACK_SPACING;
-    const directPartnerY = route.parentNodes[0].y + CARD_HEIGHT / 2;
-    route.unionAnchorY = route.partnerRelationship && route.parentNodes.length === 2 && !route.partnerHasObstacles ? directPartnerY : route.partnerRouteY;
+    if (!partnerUnionPoint) route.partnerRouteY = parentBottom + 12 + partnerIndex * PARTNER_TRACK_SPACING;
+    if (partnerUnionPoint) route.unionAnchorX = partnerUnionPoint.x;
+    route.unionAnchorY = partnerUnionPoint ? partnerUnionPoint.y : route.partnerRouteY;
     route.sourceY = route.unionAnchorY;
     if (!route.children.length) {
       if (route.partnerRelationship && route.parentNodes.length === 2) {
-        if (route.partnerHasObstacles) {
-          const first = { x: centers[0], y: parentBottom }; const firstTurn = { x: centers[0], y: route.partnerRouteY };
-          const second = { x: centers[1], y: parentBottom }; const secondTurn = { x: centers[1], y: route.partnerRouteY };
-          route.partnerPathD = pathFrom([first, firstTurn, secondTurn, second]);
-          route.partnerSegments = segmentsFrom([first, firstTurn, secondTurn, second], route, "partner-line");
-        } else {
-          route.partnerPathD = pathFrom([{ x: centers[0], y: directPartnerY }, { x: centers[1], y: directPartnerY }]);
-          route.partnerSegments = segmentsFrom([{ x: centers[0], y: directPartnerY }, { x: centers[1], y: directPartnerY }], route, "partner-line");
-        }
         route.segments = route.drawPartnerLine ? route.partnerSegments : [];
         route.routeLength = route.segments.reduce(function (sum, item) { return sum + Math.hypot(item.x2 - item.x1, item.y2 - item.y1); }, 0);
       }
@@ -339,16 +444,7 @@
     const parentSegments = [];
     const parentPaths = [];
     if (route.parentNodes.length === 2 && route.partnerRelationship) {
-      if (route.partnerHasObstacles) {
-        const first = { x: centers[0], y: parentBottom }; const firstTurn = { x: centers[0], y: route.partnerRouteY };
-        const second = { x: centers[1], y: parentBottom }; const secondTurn = { x: centers[1], y: route.partnerRouteY };
-        route.partnerPathD = pathFrom([first, firstTurn, secondTurn, second]);
-        route.partnerSegments = segmentsFrom([first, firstTurn, secondTurn, second], route, "partner-line");
-      } else {
-        route.partnerPathD = pathFrom([{ x: centers[0], y: directPartnerY }, { x: centers[1], y: directPartnerY }]);
-        route.partnerSegments = segmentsFrom([{ x: centers[0], y: directPartnerY }, { x: centers[1], y: directPartnerY }], route, "partner-line");
-      }
-      const stemPoints = [{ x: anchorX, y: route.unionAnchorY }, { x: anchorX, y: route.busY }];
+      const stemPoints = [{ x: route.unionAnchorX, y: route.unionAnchorY }, { x: route.unionAnchorX, y: route.busY }];
       parentPaths.push(pathFrom(stemPoints)); parentSegments.push.apply(parentSegments, segmentsFrom(stemPoints, route, "parent-stem"));
     } else {
       route.parentNodes.forEach(function (node, index) {

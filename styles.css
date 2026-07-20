@@ -267,16 +267,19 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 
 /* SVG tree */
 .tree-link { fill: none; stroke: var(--line); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.tree-partner-link { stroke: #718c79; stroke-width: 3; }
+.tree-partner-link { stroke: #718c79; stroke-width: 1.8; }
 .tree-partner-link.is-separated { stroke-dasharray: 11 8; }
-.tree-partner-link.is-unknown { stroke: #aeb7b0; stroke-width: 2; }
+.tree-partner-link.is-unknown { stroke: #aeb7b0; stroke-width: 1.5; opacity: .82; }
 .tree-partner-marker { stroke: #61776a; stroke-width: 2.4; }
+.tree-partner-marker.is-ended { stroke-width: 2; }
+.tree-partner-interaction-hit { stroke-width: 22; }
 .tree-parent-adoptive { stroke-dasharray: 10 7; }
 .tree-parent-step { stroke-width: 1.6; stroke-dasharray: 2 7; }
 .tree-family-unit .tree-link { pointer-events: stroke; cursor: pointer; transition: opacity .16s ease, stroke-width .16s ease; }
 .tree-interaction-hit { fill: none; stroke: transparent; stroke-width: 18; pointer-events: stroke; cursor: pointer; }
 .tree-union-anchor { fill: #f7f3e8; stroke: #557c64; stroke-width: 1.8; pointer-events: none; }
 .tree-family-unit.is-selected-family .tree-link { stroke: #365f49; stroke-width: 3.4; }
+.tree-family-unit.is-selected-family .tree-partner-link { stroke-width: 2.4; }
 .tree-family-unit.is-dimmed { opacity: .2; }
 .tree-family-unit.is-generation-conflict .tree-link:not(.tree-interaction-hit) { stroke: #8b7041; }
 .tree-crossing-gap { fill: var(--ivory); stroke: none; }

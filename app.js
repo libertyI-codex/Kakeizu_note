@@ -239,6 +239,8 @@
   function partnerLineClass(relationship) {
     let className = "tree-link tree-partner-link";
     if (relationship.status === "separated") className += " is-separated";
+    if (relationship.status === "divorced") className += " is-divorced";
+    if (relationship.status === "ended") className += " is-ended";
     if (relationship.status === "unknown") className += " is-unknown";
     if (relationship.verificationStatus && relationship.verificationStatus !== "confirmed") className += " is-unverified";
     return className;
@@ -266,41 +268,50 @@
     };
   }
 
+  function partnerLineAttributes(family, relationship, role, lineIndex) {
+    const ports = family.partnerPorts || {};
+    return {
+      "data-family-key": family.familyKey,
+      "data-family-subtree-id": family.familySubtreeId || "",
+      "data-couple-block-id": family.coupleBlockId || "",
+      "data-union-node-id": family.unionNodeId || "",
+      "data-route-id": family.routeId,
+      "data-segment-id": family.routeId + ":" + role + ":" + (Number.isFinite(lineIndex) ? lineIndex : "hit"),
+      "data-relation-role": role,
+      "data-partner-person-ids": relationship.fromPersonId + " " + relationship.toPersonId,
+      "data-parent-ids": relationship.fromPersonId + " " + relationship.toPersonId,
+      "data-child-ids": family.childIds.join(" "),
+      "data-relationship-id": relationship.id,
+      "data-relationship-type": relationship.relationshipType === "marriage" ? "marriage" : "partnership",
+      "data-status": relationship.status || "current",
+      "data-left-port": ports.left && ports.left.name || "partner-right-port",
+      "data-right-port": ports.right && ports.right.name || "partner-left-port",
+      "data-line-index": Number.isFinite(lineIndex) ? lineIndex : -1,
+      tabindex: role === "partner-interaction-hit-area" ? "0" : "-1",
+      role: role === "partner-interaction-hit-area" ? "button" : "img"
+    };
+  }
+
   function renderPartnerLine(fragment, relationship, from, to, cardWidth, cardHeight, family) {
-    const left = from.x < to.x ? from : to;
-    const right = from.x < to.x ? to : from;
-    const y = (left.y + right.y) / 2 + cardHeight / 2;
-    const x1 = left.x + cardWidth;
-    const x2 = right.x;
     const className = partnerLineClass(relationship);
-    const lineAttributes = familyLineAttributes(family, "partner-line");
-    if (family.partnerHasObstacles) {
-      if (relationship.status === "divorced" || relationship.status === "ended") {
-        const leftCenter = left.x + cardWidth / 2;
-        const rightCenter = right.x + cardWidth / 2;
-        const middle = (leftCenter + rightCenter) / 2;
-        const routeY = family.partnerRouteY;
-        addPath(fragment, "M " + leftCenter + " " + (left.y + cardHeight) + " V " + routeY + " H " + (middle - 7), className, lineAttributes);
-        addPath(fragment, "M " + (middle + 7) + " " + routeY + " H " + rightCenter + " V " + (right.y + cardHeight), className, lineAttributes);
-        addPath(fragment, "M " + (middle - 4) + " " + (routeY + 7) + " L " + (middle + 4) + " " + (routeY - 7), "tree-link tree-partner-marker", familyLineAttributes(family, "partner-status-marker"));
-      } else {
-        addPath(fragment, family.partnerPathD, className, lineAttributes);
+    const typeLabel = relationship.relationshipType === "marriage" ? "婚姻" : "パートナー";
+    const statusLabel = { current: "現在", separated: "別居", divorced: "離婚", ended: "関係終了", unknown: "不明" }[relationship.status || "current"] || "不明";
+    const accessibleLabel = typeLabel + "・" + statusLabel;
+    (family.partnerLinePaths || [family.partnerPathD]).forEach(function (pathD, index) {
+      const path = addPath(fragment, pathD, className, partnerLineAttributes(family, relationship, "partner-double-line", index));
+      if (path) {
+        path.setAttribute("aria-label", accessibleLabel);
+        const title = svgElement("title", {}); title.textContent = accessibleLabel; path.appendChild(title);
       }
-      return;
+    });
+    const marker = family.partnerMarker || { x: family.unionAnchorX, y: family.unionAnchorY };
+    if (relationship.status === "divorced") {
+      addPath(fragment, "M " + (marker.x - 4) + " " + (marker.y + 8) + " L " + (marker.x + 4) + " " + (marker.y - 8), "tree-link tree-partner-marker is-divorced", partnerLineAttributes(family, relationship, "partner-status-marker", 0));
+    } else if (relationship.status === "ended") {
+      addPath(fragment, "M " + (marker.x - 5) + " " + (marker.y - 6) + " L " + (marker.x + 5) + " " + (marker.y + 6) + " M " + (marker.x + 5) + " " + (marker.y - 6) + " L " + (marker.x - 5) + " " + (marker.y + 6), "tree-link tree-partner-marker is-ended", partnerLineAttributes(family, relationship, "partner-status-marker", 0));
     }
-    if (left.generation === right.generation && x2 > x1) {
-      const middle = (x1 + x2) / 2;
-      if (relationship.status === "divorced" || relationship.status === "ended") {
-        addPath(fragment, "M " + x1 + " " + y + " H " + (middle - 7), className, lineAttributes);
-        addPath(fragment, "M " + (middle + 7) + " " + y + " H " + x2, className, lineAttributes);
-        addPath(fragment, "M " + (middle - 4) + " " + (y + 7) + " L " + (middle + 4) + " " + (y - 7), "tree-link tree-partner-marker", familyLineAttributes(family, "partner-status-marker"));
-      } else {
-        addPath(fragment, "M " + x1 + " " + y + " H " + x2, className, lineAttributes);
-      }
-      return;
-    }
-    const midY = Math.max(left.y, right.y) + cardHeight + 30;
-    addPath(fragment, "M " + (left.x + cardWidth / 2) + " " + (left.y + cardHeight) + " V " + midY + " H " + (right.x + cardWidth / 2) + " V " + (right.y + cardHeight), className, lineAttributes);
+    const hit = addPath(fragment, family.partnerHitPathD || family.partnerPathD, "tree-interaction-hit tree-partner-interaction-hit", partnerLineAttributes(family, relationship, "partner-interaction-hit-area"));
+    if (hit) { hit.setAttribute("aria-label", accessibleLabel + "の詳細を表示"); const title = svgElement("title", {}); title.textContent = accessibleLabel; hit.appendChild(title); }
   }
 
   function renderConnections(fragment, layout, persons, relationships) {
@@ -316,6 +327,7 @@
         class: "tree-family-unit" + (family.generationConflict ? " is-generation-conflict" : ""),
         "data-family-key": family.familyKey,
         "data-family-subtree-id": family.familySubtreeId || "",
+        "data-couple-block-id": family.coupleBlockId || "",
         "data-union-node-id": family.unionNodeId || "",
         "data-route-id": family.routeId,
         "data-parent-ids": family.parentIds.join(" "),
@@ -360,7 +372,7 @@
         if (verticalFamily && crossing.verticalRole === "child-stem") {
           const child = verticalFamily.children.find(function (item) { return item.id === crossing.verticalChildId; });
           if (child) verticalClass = parentLineClass(child.relationships);
-        } else if (verticalFamily && crossing.verticalRole === "partner-line" && verticalFamily.partnerRelationship) {
+        } else if (verticalFamily && crossing.verticalRole === "partner-double-line" && verticalFamily.partnerRelationship) {
           verticalClass = partnerLineClass(verticalFamily.partnerRelationship);
         }
         const marker = svgElement("g", {
@@ -647,6 +659,14 @@
       familyBlocks: scene.layout.familyBlocks,
       familySubtrees: scene.layout.familySubtrees || [],
       unionNodes: scene.layout.unionNodes || [],
+      coupleBlocks: (scene.layout.coupleBlocks || []).map(function (block) {
+        return {
+          id: block.id, unionNodeId: block.unionNodeId, leftPersonId: block.leftPersonId, rightPersonId: block.rightPersonId,
+          relationshipId: block.relationshipId, relationshipType: block.relationshipType, status: block.status,
+          generation: block.generation, centerX: block.centerX, minX: block.minX, maxX: block.maxX,
+          childIds: block.childIds.slice(), adjacent: block.adjacent
+        };
+      }),
       siblingGroups: scene.layout.siblingGroups,
       corridors: scene.layout.routingCorridors || [],
       trackGroups: scene.layout.trackGroups || [],
@@ -657,7 +677,9 @@
           familyKey: route.familyKey, familySubtreeId: route.familySubtreeId, unionNodeId: route.unionNodeId, routeId: route.routeId, parentIds: route.parentIds,
           childIds: route.children.map(function (child) { return child.id; }), parentGeneration: route.parentGeneration,
           childGeneration: route.childGeneration, corridorId: route.corridorId, trackGroupId: route.trackGroupId, trackIndex: route.trackIndex,
-          relationshipType: route.relationshipType, generationConflict: route.generationConflict
+          relationshipType: route.relationshipType, generationConflict: route.generationConflict,
+          coupleBlockId: route.coupleBlockId || "", partnerPorts: route.partnerPorts || null,
+          partnerLinePaths: (route.partnerLinePaths || []).slice()
         };
       }),
       disconnectedComponents: scene.layout.disconnectedComponents || []
@@ -1301,6 +1323,18 @@
     elements.treeSvg.addEventListener("click", function (event) {
       const node = event.target.closest(".tree-node");
       if (node && Date.now() >= state.suppressClickUntil) { openDetail(node.dataset.personId); return; }
+      const partnerLine = event.target.closest("[data-relation-role='partner-interaction-hit-area'], [data-relation-role='partner-double-line']");
+      if (partnerLine && Date.now() >= state.suppressClickUntil) {
+        const relationship = state.relationships.find(function (item) { return item.id === partnerLine.dataset.relationshipId; });
+        const partnerIds = (partnerLine.dataset.partnerPersonIds || "").split(/\s+/).filter(Boolean);
+        const personById = new Map(state.persons.map(function (person) { return [person.id, person]; }));
+        const names = partnerIds.map(function (id) { return fullName(personById.get(id) || { familyName: "", givenName: id }); }).join("・");
+        const type = relationship && relationship.relationshipType || partnerLine.dataset.relationshipType;
+        const status = relationship && relationship.status || partnerLine.dataset.status || "current";
+        const dates = relationship && (relationship.startDate || relationship.endDate) ? "・" + formatDate(relationship.startDate) + "〜" + formatDate(relationship.endDate) : "";
+        showToast(names + "・" + relationLabel(type) + "・" + statusLabel(status, type) + dates);
+        return;
+      }
       const relationLine = event.target.closest("[data-relation-role='interaction-hit-area'], [data-relation-role='children-bus'], [data-relation-role='child-stem'], [data-relation-role='adoptive-route'], [data-relation-role='step-route']");
       if (relationLine && Date.now() >= state.suppressClickUntil) {
         const parentIds = (relationLine.dataset.parentIds || "").split(/\s+/).filter(Boolean);
@@ -1801,7 +1835,7 @@
 
   function exportSvgStyles() {
     return "text{font-family:'Yu Gothic UI','Hiragino Kaku Gothic ProN',Meiryo,sans-serif}" +
-      ".tree-link{fill:none;stroke:#9aab9e;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.tree-partner-link{stroke:#718c79;stroke-width:3}.tree-partner-link.is-separated{stroke-dasharray:11 8}.tree-partner-link.is-unknown{stroke:#aeb7b0;stroke-width:2}.tree-partner-marker{stroke:#61776a;stroke-width:2.4}.tree-parent-adoptive{stroke-dasharray:10 7}.tree-parent-step{stroke-width:1.6;stroke-dasharray:2 7}.tree-disconnected-divider{stroke:#c8c9bf;stroke-width:1.5;stroke-dasharray:5 7}.tree-disconnected-label{fill:#68756d;font-size:13px;font-weight:700}" +
+      ".tree-link{fill:none;stroke:#9aab9e;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.tree-partner-link{stroke:#718c79;stroke-width:1.8}.tree-partner-link.is-separated{stroke-dasharray:11 8}.tree-partner-link.is-unknown{stroke:#aeb7b0;stroke-width:1.5;opacity:.82}.tree-partner-marker{stroke:#61776a;stroke-width:2.4}.tree-partner-marker.is-ended{stroke-width:2}.tree-parent-adoptive{stroke-dasharray:10 7}.tree-parent-step{stroke-width:1.6;stroke-dasharray:2 7}.tree-disconnected-divider{stroke:#c8c9bf;stroke-width:1.5;stroke-dasharray:5 7}.tree-disconnected-label{fill:#68756d;font-size:13px;font-weight:700}" +
       ".tree-crossing-gap{fill:#f7f3e8;stroke:none}.tree-crossing-overpass{pointer-events:none}.tree-interaction-hit{display:none}.tree-union-anchor{fill:#f7f3e8;stroke:#557c64;stroke-width:1.8}.tree-family-unit.is-generation-conflict .tree-link{stroke:#8b7041}" +
       ".tree-generation-label{fill:#557c64;font-size:13px;font-weight:700}.tree-link.is-unverified{stroke-dasharray:4 5}.tree-node-card{fill:#fffef9;stroke:#d6d5c9;stroke-width:1.5}.tree-node.is-focus .tree-node-card{stroke:#557c64;stroke-width:3}.tree-node.has-generation-conflict .tree-node-card{stroke:#8b7041;stroke-dasharray:5 4}.tree-node-photo-bg{fill:#e3eee5}.tree-node-initial{fill:#3f6250;font-size:23px;font-weight:700;text-anchor:middle;dominant-baseline:central}.tree-node-name{fill:#2c3a32;font-size:16px;font-weight:700;text-anchor:middle}.tree-node-former{fill:#68756d;font-size:11px;text-anchor:middle}.tree-node-years{fill:#68756d;font-size:12px;text-anchor:middle}.tree-node-deceased{fill:#ecebe4;stroke:#d6d5c9}.tree-node-deceased-text{fill:#68756d;font-size:10px;text-anchor:middle}.tree-node-focus-badge{fill:#557c64}.tree-node-focus-text{fill:white;font-size:9px;font-weight:700;text-anchor:middle}.tree-node-verification{fill:#fff4d8;stroke:#8b7041}.tree-node-verification-text{fill:#6c5328;font-size:10px;font-weight:700;text-anchor:middle}";
   }
