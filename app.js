@@ -499,6 +499,18 @@
     };
   }
 
+  function kinshipBackgroundClass(result, person) {
+    const classes = [];
+    if (person && person.isDeceased) classes.push("person-card--deceased");
+    const mode = state.settings && state.settings.kinshipDisplayMode || "both";
+    if (mode === "none" || !result) return classes.join(" ");
+    const degree = Number(result.degree);
+    const isDirectKinship = (result.category === "blood" || result.category === "adoptive") && degree >= 1 && degree <= 6;
+    const isAffinityKinship = result.category === "affinity" && degree >= 1 && degree <= 3;
+    if (isDirectKinship || isAffinityKinship) classes.push("person-card--kinship-" + degree);
+    return classes.join(" ");
+  }
+
   function personKana(person) {
     return ((person.familyNameKana || "") + " " + (person.givenNameKana || "")).trim();
   }
@@ -507,12 +519,13 @@
     const kinship = kinshipFor(person.id);
     const kinshipParts = kinshipDisplayParts(kinship);
     const categoryKey = kinshipKey(kinship);
+    const backgroundClass = kinshipBackgroundClass(kinship, person);
     const statusWords = [person.verificationStatus && person.verificationStatus !== "confirmed" ? verificationLabel(person.verificationStatus) : ""].filter(Boolean);
     const accessible = kinship && kinship.category === "self"
       ? [fullName(person), "基準人物", person.isDeceased ? "故人" : ""].filter(Boolean).join("、")
       : [fullName(person), kinship ? "基準人物から見て" + kinship.displayDegree : "親等未判定", kinship && kinship.relationshipLabel, person.isDeceased ? "故人" : ""].filter(Boolean).join("、");
     const group = svgElement("g", {
-      class: "tree-node" + (node.isFocus ? " is-focus" : "") + (node.hasGenerationConflict ? " has-generation-conflict" : ""),
+      class: "tree-node" + (backgroundClass ? " " + backgroundClass : "") + (node.isFocus ? " is-focus" : "") + (node.hasGenerationConflict ? " has-generation-conflict" : ""),
       transform: "translate(" + node.x + " " + node.y + ")", tabindex: "0", role: "button",
       "aria-label": accessible, "data-person-id": person.id,
       "data-generation": node.relativeGeneration === null ? "unknown" : node.relativeGeneration,
@@ -1273,7 +1286,7 @@
     }
     candidates = PersonCandidates.sortPersonsByKanjiName(candidates);
     elements.relationTarget.innerHTML = candidates.map(function (person) {
-      return "<option value=\"" + escapeHtml(person.id) + "\">" + escapeHtml(personCandidateOptionLabel(person)) + "</option>";
+      return "<option value=\"" + escapeHtml(person.id) + "\">" + escapeHtml(fullName(person)) + "</option>";
     }).join("");
     elements.relationTarget.value = selectedId && candidates.some(function (person) { return person.id === selectedId; }) ? selectedId : (candidates[0] && candidates[0].id) || "";
   }
@@ -1351,11 +1364,10 @@
       state.selectedExistingRelativeId = "";
     }
     const people = PersonCandidates.rankAndSortPersonCandidates(candidates, query).slice(0, 80);
-    const nameCounts = new Map();
-    people.forEach(function (person) { const name = fullName(person); nameCounts.set(name, (nameCounts.get(name) || 0) + 1); });
     elements.relativePersonResults.innerHTML = people.length ? people.map(function (person) {
       const selected = person.id === state.selectedExistingRelativeId;
-      return "<button class=\"person-pick candidate-person-row\" type=\"button\" data-existing-relative=\"" + escapeHtml(person.id) + "\" aria-selected=\"" + selected + "\">" + avatarHtml(person) + candidateIdentityHtml(person, nameCounts.get(fullName(person)) > 1) + "</button>";
+      const name = fullName(person);
+      return "<button class=\"person-pick relation-candidate-compact\" type=\"button\" data-existing-relative=\"" + escapeHtml(person.id) + "\" aria-selected=\"" + selected + "\" aria-label=\"" + escapeHtml(name) + "\" title=\"" + escapeHtml(name) + "\"><span class=\"relation-candidate-name\">" + escapeHtml(name) + "</span></button>";
     }).join("") : "<p class=\"search-empty\">該当する人物はいません</p>";
   }
 
@@ -2131,7 +2143,7 @@
     return "text{font-family:'Yu Gothic UI','Hiragino Kaku Gothic ProN',Meiryo,sans-serif}" +
       ".tree-link{fill:none;stroke:#9aab9e;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.tree-partner-link{stroke:#718c79;stroke-width:1.8}.tree-partner-link.is-separated{stroke-dasharray:11 8}.tree-partner-link.is-unknown{stroke:#aeb7b0;stroke-width:1.5;opacity:.82}.tree-partner-marker{stroke:#61776a;stroke-width:2.4}.tree-partner-marker.is-ended{stroke-width:2}.tree-parent-adoptive{stroke-dasharray:10 7}.tree-parent-step{stroke-width:1.6;stroke-dasharray:2 7}.tree-disconnected-divider{stroke:#c8c9bf;stroke-width:1.5;stroke-dasharray:5 7}.tree-disconnected-label{fill:#68756d;font-size:13px;font-weight:700}" +
       ".tree-crossing-gap{fill:#f7f3e8;stroke:none}.tree-crossing-overpass{pointer-events:none}.tree-interaction-hit{display:none}.tree-union-anchor{fill:#f7f3e8;stroke:#557c64;stroke-width:1.8}.tree-family-unit.is-generation-conflict .tree-link{stroke:#8b7041}" +
-      ".tree-generation-label{fill:#557c64;font-size:13px;font-weight:700}.tree-link.is-unverified{stroke-dasharray:4 5}.tree-node-card{fill:#fffef9;stroke:#d6d5c9;stroke-width:1.5}.tree-node.is-focus .tree-node-card{stroke:#557c64;stroke-width:3}.tree-node.has-generation-conflict .tree-node-card{stroke:#8b7041;stroke-dasharray:5 4}.tree-node-photo-bg{fill:#e3eee5}.tree-node-initial{fill:#3f6250;font-size:23px;font-weight:700;text-anchor:middle;dominant-baseline:central}.tree-node-name{fill:#2c3a32;font-size:16.5px;font-weight:800;text-anchor:middle}.tree-node-kana{fill:#68756d;font-size:9.5px;text-anchor:middle}.tree-node-kinship-label{fill:#3f6250;font-size:11px;font-weight:700;text-anchor:middle}.tree-node-years{fill:#68756d;font-size:11px;text-anchor:middle}.tree-node-status{fill:#68756d;font-size:9.5px;text-anchor:middle}.tree-node-deceased{fill:#ecebe4;stroke:#d6d5c9}.tree-node-deceased-text{fill:#68756d;font-size:10px;text-anchor:middle}.tree-node-kinship-badge{fill:#edf3ed;stroke:#b7c7ba}.tree-node-kinship-badge.is-self{fill:#557c64;stroke:#3f6250}.tree-node-kinship-badge.is-spouse{fill:#f1eee5;stroke:#b8aa88}.tree-node-kinship-badge.is-affinity{fill:#edf0f5;stroke:#aab5c4}.tree-node-kinship-badge.is-outside{fill:#f1efeb;stroke:#c5c0b6}.tree-node-kinship-badge-text{fill:#3f6250;font-size:9px;font-weight:800;text-anchor:middle}.tree-node-kinship-badge-text.is-self{fill:white}.tree-node-kinship-badge-text.is-spouse{fill:#6c5b37}.tree-node-kinship-badge-text.is-affinity{fill:#4d6077}.tree-node-kinship-badge-text.is-outside{fill:#6d6961}.tree-node-verification{fill:#fff4d8;stroke:#8b7041}.tree-node-verification-text{fill:#6c5328;font-size:10px;font-weight:700;text-anchor:middle}";
+      ".tree-generation-label{fill:#557c64;font-size:13px;font-weight:700}.tree-link.is-unverified{stroke-dasharray:4 5}.tree-node-card{fill:#fffef9;stroke:#d6d5c9;stroke-width:1.5}.tree-node.person-card--deceased .tree-node-card{fill:#eeeeee}.tree-node.person-card--kinship-1 .tree-node-card{fill:#f6a8bd}.tree-node.person-card--kinship-2 .tree-node-card{fill:#f8b8c9}.tree-node.person-card--kinship-3 .tree-node-card{fill:#fac7d5}.tree-node.person-card--kinship-4 .tree-node-card{fill:#fbd4df}.tree-node.person-card--kinship-5 .tree-node-card{fill:#fde1e8}.tree-node.person-card--kinship-6 .tree-node-card{fill:#feecf1}.tree-node.is-focus .tree-node-card{stroke:#557c64;stroke-width:3}.tree-node.has-generation-conflict .tree-node-card{stroke:#8b7041;stroke-dasharray:5 4}.tree-node-photo-bg{fill:#e3eee5}.tree-node-initial{fill:#3f6250;font-size:23px;font-weight:700;text-anchor:middle;dominant-baseline:central}.tree-node-name{fill:#2c3a32;font-size:16.5px;font-weight:800;text-anchor:middle}.tree-node-kana{fill:#68756d;font-size:9.5px;text-anchor:middle}.tree-node-kinship-label{fill:#3f6250;font-size:11px;font-weight:700;text-anchor:middle}.tree-node-years{fill:#68756d;font-size:11px;text-anchor:middle}.tree-node-status{fill:#68756d;font-size:9.5px;text-anchor:middle}.tree-node-deceased{fill:#ecebe4;stroke:#d6d5c9}.tree-node-deceased-text{fill:#68756d;font-size:10px;text-anchor:middle}.tree-node-kinship-badge{fill:#edf3ed;stroke:#b7c7ba}.tree-node-kinship-badge.is-self{fill:#557c64;stroke:#3f6250}.tree-node-kinship-badge.is-spouse{fill:#f1eee5;stroke:#b8aa88}.tree-node-kinship-badge.is-affinity{fill:#edf0f5;stroke:#aab5c4}.tree-node-kinship-badge.is-outside{fill:#f1efeb;stroke:#c5c0b6}.tree-node-kinship-badge-text{fill:#3f6250;font-size:9px;font-weight:800;text-anchor:middle}.tree-node-kinship-badge-text.is-self{fill:white}.tree-node-kinship-badge-text.is-spouse{fill:#6c5b37}.tree-node-kinship-badge-text.is-affinity{fill:#4d6077}.tree-node-kinship-badge-text.is-outside{fill:#6d6961}.tree-node-verification{fill:#fff4d8;stroke:#8b7041}.tree-node-verification-text{fill:#6c5328;font-size:10px;font-weight:700;text-anchor:middle}";
   }
 
   function privacyInitial(person) {

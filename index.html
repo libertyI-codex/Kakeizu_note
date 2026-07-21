@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#557c64">
   <meta name="description" content="基準人物から見た1～6親等・姻族・関係経路を表示できる端末内保存の家系図ノート">
-  <meta name="application-version" content="1.0.0-prototype.4-fix.4-kinship.1">
+  <meta name="application-version" content="1.0.0-prototype.4-fix.4-kinship.2">
   <title>家系図ノート</title>
   <script>
     if (/^https?:$/.test(location.protocol)) {
@@ -15,6 +15,7 @@
       document.head.appendChild(manifestLink);
     }
   </script>
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png?v=kinship2">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <script defer src="./db.js"></script>
@@ -63,7 +64,7 @@
         <div id="privacyNotice" class="privacy-notice"><span aria-hidden="true">●</span> データはこの端末内だけに保存されます<button type="button" data-dismiss-notice aria-label="お知らせを閉じる">×</button></div>
         <button id="viewSummary" class="view-summary" type="button">全員を表示</button>
         <section id="kinshipSummary" class="kinship-summary" aria-live="polite" aria-label="親等表示の要約"></section>
-        <details id="kinshipLegend" class="kinship-legend"><summary>親等凡例</summary><div class="kinship-legend-grid"><span data-kind="self">基準人物</span><span data-kind="degree-1">1親等</span><span data-kind="degree-2">2親等</span><span data-kind="degree-3">3親等</span><span data-kind="degree-4">4親等</span><span data-kind="degree-5">5親等</span><span data-kind="degree-6">6親等</span><span data-kind="spouse">配偶者</span><span data-kind="affinity">姻族</span><span data-kind="outside">親等外・未判定</span></div></details>
+        <details id="kinshipLegend" class="kinship-legend"><summary>親等凡例</summary><div class="kinship-legend-grid"><span data-kind="self">基準人物</span><span data-kind="degree-1">1親等</span><span data-kind="degree-2">2親等</span><span data-kind="degree-3">3親等</span><span data-kind="degree-4">4親等</span><span data-kind="degree-5">5親等</span><span data-kind="degree-6">6親等</span><span data-kind="spouse">配偶者</span><span data-kind="affinity">姻族</span><span data-kind="deceased">故人</span><span data-kind="outside">親等外・未判定</span></div></details>
         <div id="treeStage" class="tree-stage">
           <svg id="treeSvg" aria-label="家系図" role="img"><g id="treeViewport"></g></svg>
           <div id="treeLoading" class="state-message"><span class="spinner" aria-hidden="true"></span><p>家系図を読み込んでいます</p></div>
@@ -283,7 +284,7 @@
       <section class="setting-section"><h3>データのバックアップ</h3><p>全家系図・人物・関係・写真・資料添付・表示設定を、ひとつのJSONファイルに保存します。</p><label class="field"><span>JSONの復元方法</span><select id="importMode"><option value="new">新しい家系図として復元（推奨）</option><option value="append">同じIDが存在しない場合のみ追加</option><option value="replace">現在の家系図を置き換える</option></select></label><p class="helper-text">置き換えは家系図単体バックアップのみ利用でき、実行前に自動スナップショットを作成します。</p><div class="button-row"><button id="exportButton" class="primary-button" type="button">全体JSONを書き出す</button><label class="secondary-button file-button" for="importInput">JSONから復元</label><input id="importInput" type="file" accept="application/json,.json" hidden></div></section>
       <section class="setting-section"><h3>サンプルデータ</h3><p>試作4の表示確認用データで現在の家系図を置き換えます。事前スナップショットを作成します。</p><button id="resetSampleButton" class="secondary-button" type="button">サンプルデータを再登録</button></section>
       <section class="setting-section danger-section"><h3>全データ削除</h3><p>この端末に保存した人物・関係・写真・除外情報をすべて削除します。</p><button id="deleteAllButton" class="danger-button" type="button">全データを削除</button></section>
-      <section class="setting-section app-info"><h3>アプリ情報</h3><dl><div><dt>バージョン</dt><dd>Ver.1.0 試作4 修正4 親等表示1</dd></div><div><dt>内部バージョン</dt><dd>1.0.0-prototype.4-fix.4-kinship.1</dd></div><div><dt>保存先</dt><dd>この端末のIndexedDB</dd></div><div><dt>通信</dt><dd>外部送信なし</dd></div></dl></section>
+      <section class="setting-section app-info"><h3>アプリ情報</h3><dl><div><dt>バージョン</dt><dd>Ver.1.0 試作4 修正4 親等表示2</dd></div><div><dt>内部バージョン</dt><dd>1.0.0-prototype.4-fix.4-kinship.2</dd></div><div><dt>保存先</dt><dd>この端末のIndexedDB</dd></div><div><dt>通信</dt><dd>外部送信なし</dd></div></dl></section>
     </div>
   </dialog>
 

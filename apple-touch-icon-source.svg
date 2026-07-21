@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">家系図ノート iPhoneホーム画面アイコン</title>
+  <desc id="desc">Liberty Codex共通デザイン。濃紺の背景、左上の淡金色の蝶紋、中央の落ち着いた紅色の八角形プレートと「家」の一文字。</desc>
+  <rect width="1024" height="1024" fill="#0F1B2D"/>
+  <rect x="64" y="64" width="896" height="896" rx="184" fill="#122033"/>
+  <circle cx="512" cy="550" r="386" fill="#0A1422"/>
+  <path d="M254 244 H770 L884 358 V774 L770 888 H254 L140 774 V358 Z" fill="#71354B"/>
+  <path d="M254 244 H770 L884 358 V774 L770 888 H254 L140 774 V358 Z" fill="#B75978"/>
+  <path d="M286 294 H738 L834 390 V742 L738 838 H286 L190 742 V390 Z" fill="none" stroke="#FFF0C7" stroke-width="14" opacity="0.76"/>
+  <path d="M296 838 H728" stroke="#06101A" stroke-width="22" stroke-linecap="round" opacity="0.30"/>
+  <g id="liberty-codex-butterfly" transform="translate(178 174) scale(0.34)">
+    <circle cx="0" cy="0" r="396" fill="#0A1320" stroke="#E2C77F" stroke-width="54"/>
+    <circle cx="0" cy="0" r="310" fill="none" stroke="#E2C77F" stroke-width="18" opacity="0.68"/>
+    <g fill="#E2C77F" stroke="#E2C77F" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M-42 -38 C-126 -198 -296 -208 -354 -76 C-406 42 -304 128 -178 104 C-106 90 -62 34 -42 -38Z"/>
+      <path d="M42 -38 C126 -198 296 -208 354 -76 C406 42 304 128 178 104 C106 90 62 34 42 -38Z"/>
+      <path d="M-62 54 C-188 78 -282 194 -238 326 C-194 460 -74 344 -44 168 C-36 118 -42 82 -62 54Z"/>
+      <path d="M62 54 C188 78 282 194 238 326 C194 460 74 344 44 168 C36 118 42 82 62 54Z"/>
+      <ellipse cx="0" cy="92" rx="38" ry="182"/>
+      <circle cx="0" cy="-66" r="36"/>
+      <path d="M-48 -88 C-126 -182 -268 -132 -254 -8" fill="none" stroke-width="42"/>
+      <path d="M-260 -4 C-276 66 -354 64 -360 8" fill="none" stroke-width="34"/>
+      <path d="M48 -88 C122 -182 220 -140 202 -44" fill="none" stroke-width="42"/>
+      <path d="M202 -48 C250 -122 332 -84 308 -12" fill="none" stroke-width="40"/>
+      <path d="M-168 182 L-78 320" fill="none" stroke-width="24"/>
+      <path d="M-96 150 L-32 328" fill="none" stroke-width="24"/>
+      <path d="M96 150 L32 328" fill="none" stroke-width="24"/>
+      <path d="M168 182 L78 320" fill="none" stroke-width="24"/>
+    </g>
+  </g>
+  <g id="central-kanji" text-anchor="middle" dominant-baseline="middle" font-family="Yu Gothic UI, Yu Gothic, Meiryo, sans-serif" font-weight="900">
+    <text x="512" y="568" font-size="540" fill="#FFF8E7" stroke="#050A10" stroke-width="24" stroke-linejoin="round" paint-order="stroke">家</text>
+  </g>
+</svg>

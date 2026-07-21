@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "family-tree-note-v4-fix4-kinship1";
+const CACHE_NAME = "family-tree-note-v4-fix4-kinship2-icon-ui1";
 const APP_FILES = [
   "./",
   "./index.html",
@@ -19,6 +19,7 @@ const APP_FILES = [
   "./app.js",
   "./v4-app.js",
   "./manifest.webmanifest",
+  "./apple-touch-icon.png?v=kinship2",
   "./icon.svg"
 ];
 

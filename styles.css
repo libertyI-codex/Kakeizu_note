@@ -256,6 +256,8 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 .candidate-name-notes, .candidate-life { display: flex; flex-wrap: wrap; gap: 3px 10px; }
 .candidate-deceased { padding-inline: 6px; border-radius: 999px; background: #eeece7; color: #6f6b64; }
 .candidate-identifier { font-variant-numeric: tabular-nums; }
+.relation-candidate-compact { min-height: 48px; align-items: center; padding-block: 9px; }
+.relation-candidate-name { min-width: 0; overflow: hidden; color: var(--ink); font-size: 1rem; font-weight: 750; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 
 .settings-dialog { width: min(700px, calc(100% - 32px)); }
 .settings-body { display: grid; gap: 16px; max-height: calc(100vh - 130px); }
@@ -305,6 +307,13 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 .tree-node { cursor: pointer; }
 .tree-node.is-kinship-dimmed { opacity: .22; }
 .tree-node-card { fill: #fffef9; stroke: #d6d5c9; stroke-width: 1.5; filter: drop-shadow(0 4px 6px rgba(47,65,53,.12)); }
+.tree-node.person-card--deceased .tree-node-card { fill: #eeeeee; }
+.tree-node.person-card--kinship-1 .tree-node-card { fill: #f6a8bd; }
+.tree-node.person-card--kinship-2 .tree-node-card { fill: #f8b8c9; }
+.tree-node.person-card--kinship-3 .tree-node-card { fill: #fac7d5; }
+.tree-node.person-card--kinship-4 .tree-node-card { fill: #fbd4df; }
+.tree-node.person-card--kinship-5 .tree-node-card { fill: #fde1e8; }
+.tree-node.person-card--kinship-6 .tree-node-card { fill: #feecf1; }
 .tree-node:hover .tree-node-card, .tree-node:focus .tree-node-card { stroke: var(--green); stroke-width: 2.5; }
 .tree-node.is-focus .tree-node-card { stroke: var(--green); stroke-width: 3; }
 .tree-node.has-generation-conflict .tree-node-card { stroke: #8b7041; stroke-dasharray: 5 4; }
@@ -395,9 +404,16 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 .kinship-legend-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 0 10px 10px; }
 .kinship-legend-grid span { min-width: 0; padding: 3px 6px; border: 1px solid #cbd5cc; border-radius: 999px; background: #edf3ed; text-align: center; white-space: nowrap; }
 .kinship-legend-grid [data-kind=self] { background: var(--green); border-color: var(--green-dark); color: white; }
+.kinship-legend-grid [data-kind=degree-1] { background: #f6a8bd; border-color: #d9879f; }
+.kinship-legend-grid [data-kind=degree-2] { background: #f8b8c9; border-color: #de99ac; }
+.kinship-legend-grid [data-kind=degree-3] { background: #fac7d5; border-color: #e5a7b8; }
+.kinship-legend-grid [data-kind=degree-4] { background: #fbd4df; border-color: #e9b4c2; }
+.kinship-legend-grid [data-kind=degree-5] { background: #fde1e8; border-color: #edc1cc; }
+.kinship-legend-grid [data-kind=degree-6] { background: #feecf1; border-color: #f1ced7; }
 .kinship-legend-grid [data-kind=spouse] { background: #f1eee5; border-color: #b8aa88; }
 .kinship-legend-grid [data-kind=affinity] { background: #edf0f5; border-color: #aab5c4; }
 .kinship-legend-grid [data-kind=outside] { background: #f1efeb; border-color: #c5c0b6; }
+.kinship-legend-grid [data-kind=deceased] { background: #eeeeee; border-color: #c9c9c9; }
 .kinship-detail-summary { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 9px; padding: 11px; border-radius: 12px; background: var(--green-soft); }
 .kinship-detail-summary strong { min-width: 0; }
 .kinship-detail-summary small { grid-column: 2; color: var(--muted); }
