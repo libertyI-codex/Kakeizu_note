@@ -1,8 +1,8 @@
 {
   "name": "家系図ノート",
   "short_name": "家系図ノート",
-  "description": "1～6親等の背景表示と簡潔な関係候補選択に対応した端末内保存の家系図アプリ（Ver.1.0 試作4 修正4 親等表示2）",
-  "version": "1.0.0-prototype.4-fix.4-kinship.2",
+  "description": "iPhoneアイコン反映と故人カード背景を修正した端末内保存の家系図アプリ（Ver.1.0 試作4 修正4 親等表示2 修正1）",
+  "version": "1.0.0-prototype.4-fix.4-kinship.2-fix.1",
   "lang": "ja",
   "start_url": "./index.html",
   "scope": "./",
@@ -10,6 +10,12 @@
   "background_color": "#f7f3e8",
   "theme_color": "#557c64",
   "icons": [
+    {
+      "src": "./apple-touch-icon-family-v2.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
     {
       "src": "./icon.svg",
       "sizes": "any",

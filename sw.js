@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "family-tree-note-v4-fix4-kinship2-icon-ui1";
+const CACHE_NAME = "family-tree-note-v4-fix4-kinship2-iconfix1-deceased1";
 const APP_FILES = [
   "./",
   "./index.html",
@@ -19,9 +19,17 @@ const APP_FILES = [
   "./app.js",
   "./v4-app.js",
   "./manifest.webmanifest",
-  "./apple-touch-icon.png?v=kinship2",
+  "./apple-touch-icon.png",
+  "./apple-touch-icon-family-v2.png",
+  "./apple-touch-icon-source.svg",
   "./icon.svg"
 ];
+
+function isAppIconRequest(url) {
+  return url.pathname.endsWith("/apple-touch-icon.png") ||
+    url.pathname.endsWith("/apple-touch-icon-family-v2.png") ||
+    url.pathname.endsWith("/apple-touch-icon-source.svg");
+}
 
 self.addEventListener("install", function (event) {
   event.waitUntil(
@@ -51,6 +59,22 @@ self.addEventListener("fetch", function (event) {
   if (event.request.method !== "GET") return;
   const requestUrl = new URL(event.request.url);
   if (requestUrl.origin !== self.location.origin) return;
+  if (isAppIconRequest(requestUrl)) {
+    event.respondWith(
+      fetch(event.request).then(function (response) {
+        if (response && response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then(function (cache) { cache.put(event.request, copy); });
+        }
+        return response;
+      }).catch(function () {
+        return caches.match(event.request, { ignoreSearch: true }).then(function (cached) {
+          return cached || new Response("オフラインです。", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+        });
+      })
+    );
+    return;
+  }
   event.respondWith(
     caches.match(event.request).then(function (cached) {
       if (cached) return cached;

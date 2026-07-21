@@ -307,13 +307,13 @@ fieldset legend { padding: 0 6px; color: var(--muted); font-size: .9rem; font-we
 .tree-node { cursor: pointer; }
 .tree-node.is-kinship-dimmed { opacity: .22; }
 .tree-node-card { fill: #fffef9; stroke: #d6d5c9; stroke-width: 1.5; filter: drop-shadow(0 4px 6px rgba(47,65,53,.12)); }
-.tree-node.person-card--deceased .tree-node-card { fill: #eeeeee; }
 .tree-node.person-card--kinship-1 .tree-node-card { fill: #f6a8bd; }
 .tree-node.person-card--kinship-2 .tree-node-card { fill: #f8b8c9; }
 .tree-node.person-card--kinship-3 .tree-node-card { fill: #fac7d5; }
 .tree-node.person-card--kinship-4 .tree-node-card { fill: #fbd4df; }
 .tree-node.person-card--kinship-5 .tree-node-card { fill: #fde1e8; }
 .tree-node.person-card--kinship-6 .tree-node-card { fill: #feecf1; }
+.tree-node.person-card--deceased .tree-node-card { fill: #eeeeee; }
 .tree-node:hover .tree-node-card, .tree-node:focus .tree-node-card { stroke: var(--green); stroke-width: 2.5; }
 .tree-node.is-focus .tree-node-card { stroke: var(--green); stroke-width: 3; }
 .tree-node.has-generation-conflict .tree-node-card { stroke: #8b7041; stroke-dasharray: 5 4; }
